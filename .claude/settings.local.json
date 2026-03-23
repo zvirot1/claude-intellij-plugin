@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/zvirot/eclipse-workspaceplugin/com.anthropic.eclipse.claude/src/com/anthropic/eclipse/claude/**/*.java)",
+      "Bash(git -C /Users/zvirot log --oneline)",
+      "Bash(find ~ -type f -name *.ts -o -name *.tsx)",
+      "WebFetch(domain:marketplace.visualstudio.com)",
+      "Bash(gradle wrapper:*)",
+      "Bash(gradle --version)",
+      "Read(//private/tmp/gradle-init/**)",
+      "Bash(touch settings.gradle.kts)",
+      "Bash(cp -r gradle gradlew gradlew.bat /Users/zvirot/cloude-intelij/)",
+      "Bash(./gradlew build:*)",
+      "Bash(./gradlew compileJava)",
+      "Bash(./gradlew buildPlugin)",
+      "Bash(find /Users/zvirot/cloude-intelij -name *.java -path */eclipse* -o -name *.java -path */Eclipse*)",
+      "Bash(export AWS_ACCESS_KEY_ID=\"ASIAYXKL422DPKCPCXDK\")",
+      "Bash(export AWS_SECRET_ACCESS_KEY=\"knvKBLvE949Ek6ap/zOC4yDRT7WyjgtGFQ1ly7dI\")",
+      "Bash(export AWS_SESSION_TOKEN=\"IQoJb3JpZ2luX2VjEJv//////////wEaCWV1LXdlc3QtMSJIMEYCIQCPZhXjvtZRfM0zs+RLJNjklyyQL9x366tsB++bWErmrQIhAOUV9IsnJoffUAZ/RXXRj0ZxiqJg1THWYgZ49Jbn4GdAKqIDCGQQAhoMNTk5ODQzOTg1MDMwIgwDD1XpVqBq+ZTGpZ0q/wK73C308xpSMjlrRozwi9ia8KPJ6OTpi/EnWFhpkZe/Stxpw7F5wjJc9Ax+Fg8hCKaLERjQedTjIa6/LCock7X186PdFJOHomYokfUdILeCE+UAfAPFco+rHckP7qGy8K75qyg6dooeD7P5YhMz4+mY0g3OwL0FPWbKqI9d/A7kfB0MWp8mKptA4sggFansrX0TI3GxuyG/0tNATAxTOjAvYshRdIyVOR85vVatScU7w8n4Ab+YoyjBRqBgq4q8otLayWWG9YwUlcIO3Fg8Nj/YOIvDa7NVDQ1v4gBCQMb4rhJNCa7jvc1OIVyhFIPaEqmLfde/XBIgvffwVvRconUkRKRJPh4yxanyOFvRE3/YWcqWsSNIU299T9txrotMq73UmRQyd4Q4GGsL0WeeCQb6jA7uf217744Jg+OChACRPSPRhFhw/LOWep7C7GrITyfJZS6Z6ye3EDT0RAEcGZcDE1KiVSlcXIdrLsAV6lgTdk+juu7NkFAeeTsZ4gGagzC1iv/NBjqjAYNYP694V0XpYcumprFh6vL/kccDTRLMA5LegsJsUT1aPsczQOf4hbBPId8MHCo+t1rxLjBy0NufaZOIlY4XoxBAvcFRu3fA6cz4vdjpir8hla004MgfOz34iuDMyYYud2pORQj5m2GH9USF3oSrL+kvVkZfMwkGZhZDrBzN/dvn9Qf/aJQ49wOQDrfRlyHs7iW7DT04QqbdN1kytEDNHtfGuKA=\")",
+      "Bash(aws ec2:*)",
+      "Bash(find /Users/zvirot/cloude-intelij -name *.md -type f)"
+    ]
+  }
+}

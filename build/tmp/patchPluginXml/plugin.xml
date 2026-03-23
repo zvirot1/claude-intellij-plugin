@@ -1,0 +1,60 @@
+<idea-plugin>
+  <idea-version since-build="241" until-build="251.*" />
+  <version>1.0.0</version>
+  <id>com.anthropic.claude.intellij</id>
+  <name>Claude Code</name>
+  <vendor email="support@anthropic.com" url="https://anthropic.com">Anthropic</vendor>
+  <description><![CDATA[AI coding assistant powered by Claude. Chat with Claude directly in your IDE,
+    get code explanations, reviews, refactoring suggestions, and more.]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- Tool Window -->
+    <toolWindow id="Claude" anchor="right" secondary="false" icon="/icons/claude_13.svg" factoryClass="com.anthropic.claude.intellij.ui.ClaudeToolWindowFactory" />
+    <!-- Services -->
+    <applicationService serviceImplementation="com.anthropic.claude.intellij.service.ClaudeApplicationService" />
+    <projectService serviceImplementation="com.anthropic.claude.intellij.service.ClaudeProjectService" />
+    <projectService serviceImplementation="com.anthropic.claude.intellij.diff.DiffService" />
+    <!-- Settings -->
+    <applicationConfigurable parentId="tools" instance="com.anthropic.claude.intellij.settings.ClaudeSettingsConfigurable" id="com.anthropic.claude.intellij.settings" displayName="Claude Code" />
+    <applicationService serviceImplementation="com.anthropic.claude.intellij.settings.ClaudeSettings" />
+    <!-- Status Bar -->
+    <statusBarWidgetFactory id="ClaudeStatusBar" implementation="com.anthropic.claude.intellij.statusbar.ClaudeStatusBarFactory" order="after position" />
+  </extensions>
+  <actions>
+    <!-- Editor Context Menu Group -->
+    <group id="Claude.EditorPopupMenu" text="Claude Code" popup="true" icon="/icons/claude_13.svg">
+      <add-to-group group-id="EditorPopupMenu" anchor="last" />
+      <action id="Claude.SendSelection" class="com.anthropic.claude.intellij.actions.SendSelectionAction" text="Send Selection to Claude" description="Send the selected code to Claude for discussion">
+        <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift S" />
+      </action>
+      <action id="Claude.ExplainCode" class="com.anthropic.claude.intellij.actions.ExplainCodeAction" text="Explain Code" description="Ask Claude to explain the selected code" />
+      <action id="Claude.ReviewCode" class="com.anthropic.claude.intellij.actions.ReviewCodeAction" text="Review Code" description="Ask Claude to review the selected code" />
+      <action id="Claude.RefactorCode" class="com.anthropic.claude.intellij.actions.RefactorCodeAction" text="Refactor Code" description="Ask Claude to refactor the selected code">
+        <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift R" />
+      </action>
+      <separator />
+      <action id="Claude.AnalyzeFile" class="com.anthropic.claude.intellij.actions.AnalyzeFileAction" text="Analyze This File" description="Send the current file to Claude for analysis" />
+    </group>
+    <!-- Main Menu -->
+    <group id="Claude.MainMenu" text="Claude Code" popup="true">
+      <add-to-group group-id="ToolsMenu" anchor="last" />
+      <action id="Claude.Open" class="com.anthropic.claude.intellij.actions.OpenClaudeAction" text="Open Claude Chat" description="Open the Claude Code chat panel" icon="/icons/claude_13.svg">
+        <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift C" />
+      </action>
+      <action id="Claude.NewSession" class="com.anthropic.claude.intellij.actions.NewSessionAction" text="New Conversation" description="Start a new Claude conversation" />
+      <separator />
+      <reference ref="Claude.SendSelection" />
+      <reference ref="Claude.ExplainCode" />
+      <reference ref="Claude.ReviewCode" />
+      <reference ref="Claude.RefactorCode" />
+    </group>
+    <!-- Focus Toggle (global shortcut) -->
+    <action id="Claude.FocusToggle" class="com.anthropic.claude.intellij.actions.FocusToggleAction" text="Toggle Claude Focus" description="Toggle focus between editor and Claude chat">
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl ESCAPE" />
+    </action>
+    <!-- Insert @-mention (editor shortcut) -->
+    <action id="Claude.InsertAtMention" class="com.anthropic.claude.intellij.actions.InsertAtMentionAction" text="Insert @-Mention in Claude" description="Insert current file and selection as @-mention in Claude chat">
+      <keyboard-shortcut keymap="$default" first-keystroke="alt K" />
+    </action>
+  </actions>
+</idea-plugin>
