@@ -13,14 +13,22 @@ public class NdjsonProtocolHandler {
 
     private static final Logger LOG = Logger.getInstance(NdjsonProtocolHandler.class);
 
+    /** When true, parseLine() returns null for all input (suppresses message processing). */
+    private volatile boolean suppressed = false;
+
     public NdjsonProtocolHandler() {}
+
+    /** Enable or disable message suppression. Used during interrupt to stop processing. */
+    public void setSuppressed(boolean suppressed) {
+        this.suppressed = suppressed;
+    }
 
     /**
      * Parses a single NDJSON line into a CliMessage, or returns null if unrecognized.
      */
     @SuppressWarnings("unchecked")
     public CliMessage parseLine(String line) {
-        if (line == null || line.trim().isEmpty()) {
+        if (suppressed || line == null || line.trim().isEmpty()) {
             return null;
         }
 

@@ -172,6 +172,60 @@ public class ClaudeCliManager {
     }
 
     /**
+     * Interrupts the current query and auto-restarts the CLI with --resume to preserve
+     * the conversation memory. This is the preferred way to stop a running query (vs stop()
+     * which terminates permanently).
+     *
+     * @param resumeSessionId if non-null, the CLI will restart with --resume &lt;sessionId&gt;
+     */
+    public void interruptCurrentQuery(String resumeSessionId) {
+        ProcessState current = state.get();
+        if (current != ProcessState.RUNNING) {
+            return;
+        }
+
+        // 1. Suppress further message processing immediately
+        protocolHandler.setSuppressed(true);
+        busy = false;
+
+        // 2. Kill the process forcibly (including child processes)
+        if (process != null) {
+            // Kill child process tree first (e.g. Node.js workers)
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+        }
+
+        // Stop health monitor
+        if (healthChecker != null) {
+            healthChecker.shutdownNow();
+            healthChecker = null;
+        }
+
+        fireStateChanged(ProcessState.STOPPED);
+
+        // 3. Auto-restart on background thread with --resume
+        if (resumeSessionId != null && !resumeSessionId.isEmpty() && storedConfig != null) {
+            Thread restartThread = new Thread(() -> {
+                try {
+                    // Wait for process to fully terminate
+                    if (process != null) {
+                        process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+                    }
+                    // Re-enable protocol handler
+                    protocolHandler.setSuppressed(false);
+                    // Restart with --resume
+                    start(storedConfig.withResume(resumeSessionId));
+                } catch (Exception e) {
+                    LOG.error("Failed to restart CLI after interrupt", e);
+                    fireStateChanged(ProcessState.ERROR);
+                }
+            }, "claude-cli-restart");
+            restartThread.setDaemon(true);
+            restartThread.start();
+        }
+    }
+
+    /**
      * Stops the CLI process.
      */
     public synchronized void stop() {

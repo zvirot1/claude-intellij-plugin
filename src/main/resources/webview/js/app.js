@@ -73,11 +73,12 @@
     // Sub-options for commands that have them (matching SlashCommandHandler.getSubOptions)
     var COMMAND_SUB_OPTIONS = {
         '/model': [
-            { value: 'sonnet', label: 'Sonnet',  description: 'Claude Sonnet — fast and capable' },
-            { value: 'opus',   label: 'Opus',    description: 'Claude Opus — most powerful' },
-            { value: 'haiku',  label: 'Haiku',   description: 'Claude Haiku — fastest and lightest' },
-            { value: 'claude-sonnet-4-20250514', label: 'Sonnet 4', description: 'Claude Sonnet 4 specific version' },
-            { value: 'claude-opus-4-20250514',   label: 'Opus 4',   description: 'Claude Opus 4 specific version' }
+            { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Sonnet 4.6 — Fast, balanced' },
+            { value: 'claude-opus-4-6',   label: 'Opus 4.6',   description: 'Opus 4.6 — Most capable' },
+            { value: 'claude-haiku-4-5',  label: 'Haiku 4.5',  description: 'Haiku 4.5 — Fastest, lightweight' },
+            { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet (alias)' },
+            { value: 'opus',   label: 'Opus',   description: 'Claude Opus (alias)' },
+            { value: 'haiku',  label: 'Haiku',  description: 'Claude Haiku (alias)' }
         ]
     };
 

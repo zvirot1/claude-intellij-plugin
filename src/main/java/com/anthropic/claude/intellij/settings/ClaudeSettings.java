@@ -56,6 +56,9 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
 
         /** Whether to auto-save dirty editors before tools run. */
         public boolean autoSaveBeforeTools = false;
+
+        /** User-added custom model names, comma-separated. Persisted across sessions. */
+        public String customModels = "";
     }
 
     private State myState = new State();

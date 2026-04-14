@@ -44,6 +44,22 @@ public class CliProcessConfig {
     public int getMaxTurns() { return maxTurns; }
     public String[] getAdditionalDirs() { return additionalDirs; }
 
+    /**
+     * Creates a new config identical to this one but with the given resumeSessionId.
+     * Used to restart the CLI after interrupt with --resume to preserve conversation memory.
+     */
+    public CliProcessConfig withResume(String resumeId) {
+        Builder b = new Builder(cliPath, workingDirectory)
+            .permissionMode(permissionMode)
+            .model(model)
+            .resumeSessionId(resumeId)
+            .maxTurns(maxTurns);
+        if (appendSystemPrompt != null) b.appendSystemPrompt(appendSystemPrompt);
+        if (allowedTools != null) b.allowedTools(allowedTools);
+        if (additionalDirs != null) b.additionalDirs(additionalDirs);
+        return b.build();
+    }
+
     public static class Builder {
         private String cliPath;
         private String workingDirectory;

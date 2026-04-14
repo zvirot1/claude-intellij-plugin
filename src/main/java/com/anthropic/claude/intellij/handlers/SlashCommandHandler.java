@@ -154,11 +154,12 @@ public class SlashCommandHandler {
         List<SubOption> options = new ArrayList<>();
         switch (commandName) {
             case "/model":
-                options.add(new SubOption("sonnet", "Sonnet", "Claude Sonnet — fast and capable"));
-                options.add(new SubOption("opus", "Opus", "Claude Opus — most powerful"));
-                options.add(new SubOption("haiku", "Haiku", "Claude Haiku — fastest and lightest"));
-                options.add(new SubOption("claude-sonnet-4-20250514", "Sonnet 4", "Claude Sonnet 4 specific version"));
-                options.add(new SubOption("claude-opus-4-20250514", "Opus 4", "Claude Opus 4 specific version"));
+                options.add(new SubOption("claude-sonnet-4-6", "Sonnet 4.6", "Sonnet 4.6 — Fast, balanced"));
+                options.add(new SubOption("claude-opus-4-6", "Opus 4.6", "Opus 4.6 — Most capable"));
+                options.add(new SubOption("claude-haiku-4-5", "Haiku 4.5", "Haiku 4.5 — Fastest, lightweight"));
+                options.add(new SubOption("sonnet", "Sonnet", "Claude Sonnet (alias)"));
+                options.add(new SubOption("opus", "Opus", "Claude Opus (alias)"));
+                options.add(new SubOption("haiku", "Haiku", "Claude Haiku (alias)"));
                 break;
             default:
                 break;

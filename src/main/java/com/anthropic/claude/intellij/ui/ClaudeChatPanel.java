@@ -677,15 +677,18 @@ public class ClaudeChatPanel implements Disposable {
             msg.append("Current model: **").append(currentModel != null ? currentModel : "default").append("**\n\n");
             msg.append("Usage: `/model <model-name>` to switch models.\n\n");
             msg.append("Examples:\n");
-            msg.append("- `/model sonnet` — Claude Sonnet\n");
-            msg.append("- `/model opus` — Claude Opus\n");
-            msg.append("- `/model haiku` — Claude Haiku\n");
-            msg.append("- `/model claude-sonnet-4-20250514` — Specific model version\n");
+            msg.append("- `/model claude-sonnet-4-6` — Sonnet 4.6 — Fast, balanced\n");
+            msg.append("- `/model claude-opus-4-6` — Opus 4.6 — Most capable\n");
+            msg.append("- `/model claude-haiku-4-5` — Haiku 4.5 — Fastest, lightweight\n");
+            msg.append("- `/model <any-model-id>` — Any model (saved to Settings)\n");
             showSystemMessage(msg.toString());
         } else {
             // Switch model: stop CLI and restart with new model
             String newModel = args.trim();
-            ClaudeSettings.getInstance().getState().selectedModel = newModel;
+            ClaudeSettings.State settingsState = ClaudeSettings.getInstance().getState();
+            settingsState.selectedModel = newModel;
+            // Persist custom model name so it appears in Settings dropdown
+            persistCustomModel(newModel);
 
             if (cliManager.isRunning()) {
                 cliManager.stop();
@@ -727,6 +730,30 @@ public class ClaudeChatPanel implements Disposable {
     /**
      * Shows a system-generated message in the chat (not from CLI, from the plugin itself).
      */
+    /**
+     * Persists a custom model name into settings so it appears in the Settings dropdown.
+     * Built-in models ("default", "claude-sonnet-4-6", etc.) are skipped.
+     */
+    private void persistCustomModel(String model) {
+        if (model == null || model.isEmpty()) return;
+        java.util.Set<String> builtins = java.util.Set.of(
+                "default", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5",
+                "sonnet", "opus", "haiku");
+        if (builtins.contains(model)) return;
+        ClaudeSettings.State state = ClaudeSettings.getInstance().getState();
+        if (state == null) return;
+        java.util.Set<String> customs = new java.util.LinkedHashSet<>();
+        if (state.customModels != null && !state.customModels.isEmpty()) {
+            for (String m : state.customModels.split(",")) {
+                String t = m.trim();
+                if (!t.isEmpty()) customs.add(t);
+            }
+        }
+        if (customs.add(model)) {
+            state.customModels = String.join(",", customs);
+        }
+    }
+
     private void showSystemMessage(String markdownText) {
         sendToWebview("system_message", "{\"text\":" + jsonString(markdownText) + "}");
     }
@@ -1327,8 +1354,15 @@ public class ClaudeChatPanel implements Disposable {
 
     private void handleStopGeneration() {
         if (cliManager.isRunning()) {
-            cliManager.stop();
+            // Capture session ID before stopping so we can resume with --resume
+            String sessionId = null;
+            com.anthropic.claude.intellij.model.SessionInfo info = conversationModel.getSessionInfo();
+            if (info != null && info.getSessionId() != null && !info.getSessionId().isEmpty()) {
+                sessionId = info.getSessionId();
+            }
+            cliManager.interruptCurrentQuery(sessionId);
             conversationModel.markActiveToolCallsFailed("Stopped by user");
+            cancelStreamingTimeout();
             sendToWebview("generation_stopped", "{}");
         }
     }

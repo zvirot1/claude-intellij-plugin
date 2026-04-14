@@ -62,16 +62,19 @@ public class ClaudeSettingsConfigurable implements Configurable {
         cliStatusLabel.setForeground(UIUtil.getContextHelpForeground());
         updateCliStatus();
 
-        // Model combo with common options
+        // Model combo with common options + user-added custom models
         modelCombo = new JComboBox<>(new String[]{
                 "default",
+                "claude-sonnet-4-6",
+                "claude-opus-4-6",
+                "claude-haiku-4-5",
                 "sonnet",
                 "opus",
-                "haiku",
-                "claude-sonnet-4-20250514",
-                "claude-opus-4-20250514"
+                "haiku"
         });
         modelCombo.setEditable(true); // Allow custom model names
+        // Load persisted custom models into the combo
+        loadCustomModels();
 
         // Permission mode combo
         permissionModeCombo = new JComboBox<>(new String[]{
@@ -213,6 +216,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
 
         state.cliPath = cliPathField.getText().trim();
         state.selectedModel = getSelectedItem(modelCombo);
+        saveCustomModelIfNew(state.selectedModel);
         state.initialPermissionMode = getSelectedItem(permissionModeCombo);
         state.autosave = autosaveCheckbox.isSelected();
         state.useCtrlEnterToSend = ctrlEnterCheckbox.isSelected();
@@ -280,8 +284,59 @@ public class ClaudeSettingsConfigurable implements Configurable {
         sessionHistoryLimitSpinner = null;
     }
 
+    /** Built-in model names that should NOT be persisted as custom models. */
+    private static final java.util.Set<String> BUILTIN_MODELS = java.util.Set.of(
+            "default", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5",
+            // Legacy names (still recognized by CLI)
+            "sonnet", "opus", "haiku"
+    );
+
+    /**
+     * Loads user-added custom model names from settings into the combo box.
+     */
+    private void loadCustomModels() {
+        ClaudeSettings.State state = ClaudeSettings.getInstance().getState();
+        if (state == null || state.customModels == null || state.customModels.isEmpty()) return;
+        for (String model : state.customModels.split(",")) {
+            String trimmed = model.trim();
+            if (!trimmed.isEmpty() && !isInCombo(modelCombo, trimmed)) {
+                modelCombo.addItem(trimmed);
+            }
+        }
+    }
+
+    /**
+     * If the selected model is custom (not built-in), add it to the combo and persist it.
+     */
+    private void saveCustomModelIfNew(String model) {
+        if (model == null || model.isEmpty() || BUILTIN_MODELS.contains(model)) return;
+        // Add to combo if not already there
+        if (!isInCombo(modelCombo, model)) {
+            modelCombo.addItem(model);
+        }
+        // Persist in settings
+        ClaudeSettings.State state = ClaudeSettings.getInstance().getState();
+        if (state == null) return;
+        java.util.Set<String> customs = new java.util.LinkedHashSet<>();
+        if (state.customModels != null && !state.customModels.isEmpty()) {
+            for (String m : state.customModels.split(",")) {
+                String t = m.trim();
+                if (!t.isEmpty()) customs.add(t);
+            }
+        }
+        customs.add(model);
+        state.customModels = String.join(",", customs);
+    }
+
+    private static boolean isInCombo(JComboBox<String> combo, String value) {
+        for (int i = 0; i < combo.getItemCount(); i++) {
+            if (value.equals(combo.getItemAt(i))) return true;
+        }
+        return false;
+    }
+
     private static String getSelectedItem(JComboBox<String> combo) {
         Object item = combo.getSelectedItem();
-        return item != null ? item.toString() : "";
+        return item != null ? item.toString().trim() : "";
     }
 }
