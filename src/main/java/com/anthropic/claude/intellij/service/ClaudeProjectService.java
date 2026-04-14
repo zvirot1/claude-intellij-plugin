@@ -103,7 +103,8 @@ public final class ClaudeProjectService implements Disposable {
      * registered only on the first invocation.
      */
     public void initialize() {
-        // Wire model as CLI message listener (ConversationModel implements ICliMessageListener)
+        // Wire model as CLI message listener (remove first to guarantee single registration)
+        cliManager.removeMessageListener(conversationModel);
         cliManager.addMessageListener(conversationModel);
 
         String detectedPath = ClaudeCliManager.getCliPath();

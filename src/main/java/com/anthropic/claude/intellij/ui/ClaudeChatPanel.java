@@ -138,7 +138,8 @@ public class ClaudeChatPanel implements Disposable {
         cliManager = svc.getCliManager();
         conversationModel = svc.getConversationModel();
 
-        // Wire the conversation model as a CLI message listener
+        // Wire the conversation model as a CLI message listener (singleton — remove first to avoid duplicates)
+        cliManager.removeMessageListener(conversationModel);
         cliManager.addMessageListener(conversationModel);
 
         // Wire EditDecisionManager with the project reference
@@ -1812,12 +1813,15 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     private void cleanup() {
-        // Remove listeners to prevent memory leaks
+        // Remove listeners to prevent memory leaks and duplicate messages
         if (conversationModel != null && conversationListener != null) {
             conversationModel.removeListener(conversationListener);
         }
-        if (cliManager != null && cliStateListener != null) {
-            cliManager.removeStateListener(cliStateListener);
+        if (cliManager != null) {
+            if (cliStateListener != null) {
+                cliManager.removeStateListener(cliStateListener);
+            }
+            cliManager.removeMessageListener(conversationModel);
         }
         cancelStreamingTimeout();
         if (cliManager != null && cliManager.isRunning()) {
