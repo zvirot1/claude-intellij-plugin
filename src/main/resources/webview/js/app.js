@@ -222,6 +222,8 @@
         }
 
         messageInput.value = '';
+        messageInput.style.direction = 'ltr';
+        messageInput.style.textAlign = 'left';
         clearAttachments();
         autoResizeTextarea();
         updateSendButton();
@@ -519,6 +521,25 @@
     });
 
     // ==================== RTL Detection ====================
+
+    /**
+     * Updates the input textarea direction based on the first significant character.
+     * Called on every input event so the textarea flips to RTL when typing Hebrew/Arabic.
+     */
+    function updateInputDirection() {
+        var text = messageInput.value;
+        var firstChar = text.replace(/[\s\n\r\t@#/\-`>]/g, '').charAt(0);
+        if (firstChar && /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(firstChar)) {
+            messageInput.style.direction = 'rtl';
+            messageInput.style.textAlign = 'right';
+        } else {
+            messageInput.style.direction = 'ltr';
+            messageInput.style.textAlign = 'left';
+        }
+    }
+
+    // Attach input direction listener
+    messageInput.addEventListener('input', updateInputDirection);
 
     /**
      * Detects RTL text and applies dir="rtl" to message content elements.
