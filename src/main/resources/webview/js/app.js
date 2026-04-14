@@ -320,10 +320,10 @@
             });
         }
 
-        // New Tab button — opens a parallel conversation tab
+        // New Conversation Window — starts a fresh session (clears chat + restarts CLI)
         if (newTabBtn) {
             newTabBtn.addEventListener('click', function () {
-                bridge.sendToJava('new_tab', {});
+                bridge.sendToJava('new_session', {});
             });
         }
     }

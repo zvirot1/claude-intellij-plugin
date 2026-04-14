@@ -310,6 +310,28 @@ html, body {
     pointer-events: none;
 }
 
+/* CSS tooltip for JCEF (native title tooltips may not render) */
+.icon-btn[title] {
+    position: relative;
+}
+.icon-btn[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-primary);
+    white-space: nowrap;
+    z-index: 1000;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
 /* ==================== Messages Container ==================== */
 
 #messages {
