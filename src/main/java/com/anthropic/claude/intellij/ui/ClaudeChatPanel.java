@@ -1612,22 +1612,14 @@ public class ClaudeChatPanel implements Disposable {
                 com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
             if (toolWindow == null) return;
 
-            // Stop current CLI and clear conversation before creating new tab.
-            // The new ClaudeChatPanel shares the same project-level CliManager,
-            // so we must reset state first to get a truly fresh session.
+            // Stop current CLI so the new tab can start a fresh session.
+            // Do NOT clear conversationModel — the current tab keeps its messages in the webview DOM.
             if (cliManager.isRunning()) {
                 cliManager.stop();
             }
-            conversationModel.clear();
             cancelStreamingTimeout();
-            com.anthropic.claude.intellij.service.ClaudeProjectService service =
-                com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
-            service.getCheckpointManager().clearCheckpoints();
-            service.getEditDecisionManager().clearAll();
-            eagerSnapshotDone.clear();
-            stagedEditDone.clear();
-            tabNameSet = false;
 
+            // Create new tab — its ClaudeChatPanel constructor will start a fresh CLI
             ClaudeChatPanel newPanel = new ClaudeChatPanel(project);
             int tabCount = toolWindow.getContentManager().getContentCount();
             com.intellij.ui.content.Content content =
