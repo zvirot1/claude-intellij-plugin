@@ -158,6 +158,8 @@ public class ClaudeChatPanel implements Disposable {
                 // Start tracking this session for auto-save
                 if (info != null && info.getSessionId() != null) {
                     sessionManager.startNewSession(info.getWorkingDirectory());
+
+                    // History is already loaded from disk in loadLastSessionHistoryFromDisk()
                 }
             }
 
@@ -300,6 +302,13 @@ public class ClaudeChatPanel implements Disposable {
         };
         cliManager.addStateListener(cliStateListener);
     }
+
+    /** Whether this panel should auto-resume the last session on first CLI start. */
+    private boolean shouldResumeLastSession = true;
+    /** Set to true when CLI starts with --continue/--resume, so onSessionInitialized loads history. */
+    private volatile boolean resumeHistoryPending = false;
+    /** Guards against loading history twice (pushInitialState called from onLoadEnd + webview_ready). */
+    private boolean historyLoadedFromDisk = false;
 
     private void initSessionManager() {
         sessionManager = new com.anthropic.claude.intellij.session.ClaudeSessionManager();
@@ -1744,6 +1753,7 @@ public class ClaudeChatPanel implements Disposable {
             // Do NOT stop current tab's CLI — it keeps running independently.
             // The new tab creates its own CLI process and ConversationModel.
             ClaudeChatPanel newPanel = new ClaudeChatPanel(project);
+            newPanel.shouldResumeLastSession = false; // New tab = fresh session
             int tabCount = toolWindow.getContentManager().getContentCount();
             com.intellij.ui.content.Content content =
                 com.intellij.ui.content.ContentFactory.getInstance()
@@ -1787,7 +1797,12 @@ public class ClaudeChatPanel implements Disposable {
                 return;
             }
 
-            ClaudeSettings.State settings = ClaudeSettings.getInstance().getState();
+            ClaudeSettings settingsInstance = ClaudeSettings.getInstance();
+            if (settingsInstance == null) {
+                LOG.warn("ClaudeSettings not yet available, deferring CLI start");
+                return;
+            }
+            ClaudeSettings.State settings = settingsInstance.getState();
             CliProcessConfig.Builder builder = new CliProcessConfig.Builder(cliPath, projectPath);
 
             // Apply model from settings (unless "default")
@@ -1800,6 +1815,13 @@ public class ClaudeChatPanel implements Disposable {
             if (settings.initialPermissionMode != null && !settings.initialPermissionMode.isEmpty()
                     && !"default".equals(settings.initialPermissionMode)) {
                 builder.permissionMode(settings.initialPermissionMode);
+            }
+
+            // Auto-resume last session on first launch (like Eclipse --continue)
+            if (shouldResumeLastSession) {
+                shouldResumeLastSession = false;
+                builder.continueSession(true);
+                resumeHistoryPending = true;
             }
 
             // Apply effort level
@@ -1871,6 +1893,61 @@ public class ClaudeChatPanel implements Disposable {
         boolean ctrlEnter = com.anthropic.claude.intellij.settings.ClaudeSettings.getInstance()
             .getState().useCtrlEnterToSend;
         sendToWebview("set_enter_mode", "{\"ctrlEnter\":" + ctrlEnter + "}");
+
+        // Load last session history from JSONL on disk (without starting CLI)
+        if (shouldResumeLastSession && !historyLoadedFromDisk) {
+            historyLoadedFromDisk = true;
+            loadLastSessionHistoryFromDisk();
+        }
+    }
+
+    /**
+     * Loads the most recent session's conversation history from the JSONL file on disk
+     * and replays it into the webview. Does NOT start the CLI — that happens when the user
+     * sends a message (with --continue to resume the session on the CLI side).
+     */
+    private void loadLastSessionHistoryFromDisk() {
+        try {
+            // Find the most recent session from our session store
+            java.util.List<SessionInfo> sessions = sessionManager.listSessions();
+            if (sessions.isEmpty()) return;
+
+            SessionInfo lastSession = sessions.get(0); // sorted by lastActiveTime descending
+            String sessionId = lastSession.getSessionId();
+            if (sessionId == null || sessionId.isEmpty()) return;
+
+            java.util.List<MessageBlock> history = loadSessionHistoryFromJsonl(sessionId);
+            if (history.isEmpty()) return;
+
+            LOG.info("Loading " + history.size() + " messages from last session " + sessionId);
+
+            for (MessageBlock block : history) {
+                if (block.getRole() == MessageBlock.Role.USER) {
+                    sendToWebview("user_message_added", buildMessageBlockJson(block));
+                } else if (block.getRole() == MessageBlock.Role.ASSISTANT) {
+                    sendToWebview("assistant_message_started", buildMessageBlockJson(block));
+                    sendToWebview("assistant_message_completed", buildMessageBlockJson(block));
+                }
+            }
+
+            // Set tab name from first user message
+            if (!tabNameSet) {
+                for (MessageBlock block : history) {
+                    if (block.getRole() == MessageBlock.Role.USER) {
+                        tabNameSet = true;
+                        String title = block.getFullText().trim();
+                        if (title.length() > 30) title = title.substring(0, 30) + "\u2026";
+                        updateTabDisplayName(title);
+                        break;
+                    }
+                }
+            }
+
+            // Show session info
+            sendToWebview("session_initialized", buildSessionInfoJson(lastSession));
+        } catch (Exception e) {
+            LOG.warn("Failed to load last session history from disk", e);
+        }
     }
 
     /**

@@ -1,0 +1,2105 @@
+/**
+ * Main chat application logic for the Claude JCEF webview.
+ *
+ * Handles message rendering, input handling, streaming display,
+ * permission prompts, tool call rendering, and markdown formatting.
+ */
+(function () {
+    'use strict';
+
+    // ==================== DOM References ====================
+
+    var messagesContainer = document.getElementById('messages');
+    var welcomeMessage = document.getElementById('welcome-message');
+    var messageInput = document.getElementById('message-input');
+    var sendBtn = document.getElementById('send-btn');
+    var stopBtn = document.getElementById('stop-btn');
+    var newSessionBtn = document.getElementById('new-session-btn');
+    var connectionStatus = document.getElementById('connection-status');
+    var statusText = connectionStatus.querySelector('.status-text');
+    var usageInfo = document.getElementById('usage-info');
+    var sessionModel = document.getElementById('session-model');
+    var permissionBanner = document.getElementById('permission-banner');
+    var permissionToolName = document.getElementById('permission-tool-name');
+    var permissionDescription = document.getElementById('permission-description');
+    var permissionAcceptBtn = document.getElementById('permission-accept-btn');
+    var permissionRejectBtn = document.getElementById('permission-reject-btn');
+    var permissionAlwaysBtn = document.getElementById('permission-always-btn');
+    var clearBtn = document.getElementById('clear-btn');
+    var settingsBtn = document.getElementById('settings-btn');
+    var settingsDropdown = document.getElementById('settings-dropdown');
+    var statusSessionId = document.getElementById('status-session-id');
+    var statusModel = document.getElementById('status-model');
+    var statusTokens = document.getElementById('status-tokens');
+    var statusCost = document.getElementById('status-cost');
+    var reconnectBtn = document.getElementById('reconnect-btn');
+    var scrollToBottomBtn = document.getElementById('scroll-to-bottom-btn');
+    var dropOverlay = document.getElementById('drop-overlay');
+    var historyBtn = document.getElementById('history-btn');
+    var headerStopBtn = document.getElementById('header-stop-btn');
+    var newTabBtn = document.getElementById('new-tab-btn');
+
+    // ==================== State ====================
+
+    var slashMenuEl = null;
+    var slashMenuSelectedIndex = -1;
+    var slashMenuItems = [];
+
+    // Local slash command registry (matching SlashCommandHandler.java)
+    // Kept client-side so the menu appears instantly without a bridge round-trip.
+    var SLASH_COMMANDS = [
+        { name: '/new',      description: 'Start a new conversation',            local: true,  hasSubOptions: false },
+        { name: '/clear',    description: 'Clear the conversation display',      local: true,  hasSubOptions: false },
+        { name: '/cost',     description: 'Show token usage and cost summary',   local: true,  hasSubOptions: false },
+        { name: '/help',     description: 'Show available commands',             local: true,  hasSubOptions: false },
+        { name: '/stop',     description: 'Stop the current query',              local: true,  hasSubOptions: false },
+        { name: '/model',    description: 'Switch to a different model',         local: true,  hasSubOptions: true },
+        { name: '/resume',   description: 'Resume a previous session',           local: true,  hasSubOptions: false },
+        { name: '/history',  description: 'Browse and search session history',   local: true,  hasSubOptions: false },
+        { name: '/compact',  description: 'Compact conversation context',        local: true,  hasSubOptions: false },
+        { name: '/rules',   description: 'Manage Claude Code rules',            local: true,  hasSubOptions: false },
+        { name: '/mcp',     description: 'Manage MCP servers',                  local: true,  hasSubOptions: false },
+        { name: '/hooks',   description: 'Manage hooks',                        local: true,  hasSubOptions: false },
+        { name: '/memory',  description: 'Edit project memory',                 local: true,  hasSubOptions: false },
+        { name: '/skills',  description: 'Browse installed plugins and skills',  local: true,  hasSubOptions: false },
+        { name: '/commit',   description: 'Generate a git commit message',       local: false, hasSubOptions: false },
+        { name: '/review-pr',description: 'Review a pull request',               local: false, hasSubOptions: false },
+        { name: '/explain',  description: 'Explain the current file or selection', local: false, hasSubOptions: false },
+        { name: '/fix',      description: 'Fix bugs in the current file',        local: false, hasSubOptions: false },
+        { name: '/test',     description: 'Generate tests for the current code', local: false, hasSubOptions: false },
+        { name: '/refactor', description: 'Refactor the current code',           local: false, hasSubOptions: false }
+    ];
+
+    // Sub-options for commands that have them (matching SlashCommandHandler.getSubOptions)
+    var COMMAND_SUB_OPTIONS = {
+        '/model': [
+            { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Sonnet 4.6 — Fast, balanced' },
+            { value: 'claude-opus-4-6',   label: 'Opus 4.6',   description: 'Opus 4.6 — Most capable' },
+            { value: 'claude-haiku-4-5',  label: 'Haiku 4.5',  description: 'Haiku 4.5 — Fastest, lightweight' },
+            { value: 'sonnet', label: 'Sonnet', description: 'Claude Sonnet (alias)' },
+            { value: 'opus',   label: 'Opus',   description: 'Claude Opus (alias)' },
+            { value: 'haiku',  label: 'Haiku',  description: 'Claude Haiku (alias)' }
+        ]
+    };
+
+    var fileMenuEl = null;
+    var fileMenuSelectedIndex = -1;
+    var fileMenuItems = [];
+    var fileMenuAtPos = -1; // position of the @ that triggered the menu
+
+    var state = {
+        isStreaming: false,
+        isBusy: false,
+        isConnected: false,
+        hasMessages: false,
+        currentAssistantEl: null,
+        currentContentEl: null,
+        streamingTextBuffer: '',
+        pendingPermission: null,
+        autoScrollEnabled: true,
+        thinkingEl: null,
+        loadingEl: null,
+        attachedImages: [],  // Array of { dataUrl, bytes (base64) }
+        ctrlEnterToSend: false,  // When true: Ctrl+Enter sends, Enter inserts newline
+        messageIndex: 0  // Counter for message indices (used by fork)
+    };
+
+    // ==================== Initialization ====================
+
+    function init() {
+        setupInputHandlers();
+        setupButtonHandlers();
+        setupScrollHandler();
+        setupBridgeListeners();
+        setupDragAndDrop();
+        autoResizeTextarea();
+
+        // Signal that the webview is ready
+        bridge.sendToJava('webview_ready', {});
+    }
+
+    // ==================== Input Handling ====================
+
+    function setupInputHandlers() {
+        messageInput.addEventListener('keydown', function (e) {
+            // Handle popup menu navigation (slash or file menu)
+            var activeMenu = getActivePopupMenu();
+            if (activeMenu) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeMenu.selectNext();
+                    return;
+                }
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeMenu.selectPrev();
+                    return;
+                }
+                if ((e.key === 'Enter' || e.key === 'Tab') && activeMenu.getSelectedIndex() >= 0) {
+                    e.preventDefault();
+                    activeMenu.selectCurrent();
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    activeMenu.hide();
+                    return;
+                }
+            }
+
+            // Send message: depends on ctrlEnterToSend preference
+            if (e.key === 'Enter') {
+                if (state.ctrlEnterToSend) {
+                    // Ctrl+Enter or Cmd+Enter sends; plain Enter inserts newline
+                    if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        sendMessage();
+                        return;
+                    }
+                } else {
+                    // Enter sends (default); Shift+Enter inserts newline
+                    if (!e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                        return;
+                    }
+                }
+            }
+            // Escape: cancel streaming if active, otherwise clear input
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                if (state.isStreaming) {
+                    bridge.sendToJava('stop_generation', {});
+                } else {
+                    messageInput.value = '';
+                    autoResizeTextarea();
+                    updateSendButton();
+                }
+                return;
+            }
+        });
+
+        messageInput.addEventListener('input', function () {
+            autoResizeTextarea();
+            updateSendButton();
+            handleSlashInput();
+            handleAtMentionInput();
+        });
+
+        messageInput.addEventListener('paste', function () {
+            setTimeout(function () {
+                autoResizeTextarea();
+                updateSendButton();
+            }, 0);
+        });
+    }
+
+    function autoResizeTextarea() {
+        messageInput.style.height = 'auto';
+        var scrollHeight = messageInput.scrollHeight;
+        var maxHeight = 200;
+        messageInput.style.height = Math.min(scrollHeight, maxHeight) + 'px';
+    }
+
+    function updateSendButton() {
+        var hasText = messageInput.value.trim().length > 0;
+        sendBtn.disabled = !hasText || state.isStreaming;
+    }
+
+    function sendMessage() {
+        var text = messageInput.value.trim();
+        if (!text || state.isStreaming) return;
+
+        // Include attached images if any
+        if (state.attachedImages.length > 0) {
+            var imageData = [];
+            for (var i = 0; i < state.attachedImages.length; i++) {
+                imageData.push(state.attachedImages[i].bytes);
+            }
+            bridge.sendToJava('send_message', { message: text, images: imageData });
+        } else {
+            bridge.sendToJava('send_message', { message: text });
+        }
+
+        messageInput.value = '';
+        messageInput.style.direction = 'ltr';
+        messageInput.style.textAlign = 'left';
+        clearAttachments();
+        autoResizeTextarea();
+        updateSendButton();
+        messageInput.focus();
+        showLoadingIndicator();
+    }
+
+    // ==================== Button Handlers ====================
+
+    function setupButtonHandlers() {
+        sendBtn.addEventListener('click', function () {
+            sendMessage();
+        });
+
+        stopBtn.addEventListener('click', function () {
+            bridge.sendToJava('stop_generation', {});
+        });
+
+        newSessionBtn.addEventListener('click', function () {
+            bridge.sendToJava('new_session', {});
+        });
+
+        permissionAcceptBtn.addEventListener('click', function () {
+            if (state.pendingPermission) {
+                bridge.sendToJava('accept_permission', state.pendingPermission);
+                hidePermissionBanner();
+            }
+        });
+
+        permissionRejectBtn.addEventListener('click', function () {
+            if (state.pendingPermission) {
+                bridge.sendToJava('reject_permission', state.pendingPermission);
+                hidePermissionBanner();
+            }
+        });
+
+        permissionAlwaysBtn.addEventListener('click', function () {
+            if (state.pendingPermission) {
+                bridge.sendToJava('always_allow_permission', state.pendingPermission);
+                hidePermissionBanner();
+            }
+        });
+
+        clearBtn.addEventListener('click', function () {
+            bridge.sendToJava('clear_conversation', {});
+        });
+
+        // Settings dropdown toggle
+        settingsBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            settingsDropdown.classList.toggle('hidden');
+        });
+
+        // Settings dropdown item click
+        settingsDropdown.addEventListener('click', function (e) {
+            var item = e.target.closest('.settings-dropdown-item');
+            if (item) {
+                var dialog = item.getAttribute('data-dialog');
+                bridge.sendToJava('open_dialog', { dialog: dialog });
+                settingsDropdown.classList.add('hidden');
+            }
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function () {
+            if (settingsDropdown && !settingsDropdown.classList.contains('hidden')) {
+                settingsDropdown.classList.add('hidden');
+            }
+        });
+
+        // Reconnect button
+        reconnectBtn.addEventListener('click', function () {
+            bridge.sendToJava('new_session', {});
+        });
+
+        // Scroll to bottom button
+        scrollToBottomBtn.addEventListener('click', function () {
+            state.autoScrollEnabled = true;
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            scrollToBottomBtn.classList.add('hidden');
+        });
+
+        // History button
+        if (historyBtn) {
+            historyBtn.addEventListener('click', function () {
+                bridge.sendToJava('open_dialog', { dialog: 'history' });
+            });
+        }
+
+        // Header stop button
+        if (headerStopBtn) {
+            headerStopBtn.addEventListener('click', function () {
+                bridge.sendToJava('stop_generation', {});
+            });
+        }
+
+        // New Conversation Window — opens a new tab with a fresh session
+        if (newTabBtn) {
+            newTabBtn.addEventListener('click', function () {
+                bridge.sendToJava('new_tab', {});
+            });
+        }
+    }
+
+    // ==================== Scroll Handling ====================
+
+    function setupScrollHandler() {
+        messagesContainer.addEventListener('scroll', function () {
+            var el = messagesContainer;
+            var distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            state.autoScrollEnabled = distanceFromBottom < 60;
+
+            // Show/hide scroll-to-bottom button
+            if (distanceFromBottom > 200 && state.hasMessages) {
+                scrollToBottomBtn.classList.remove('hidden');
+            } else {
+                scrollToBottomBtn.classList.add('hidden');
+            }
+        });
+    }
+
+    function scrollToBottom() {
+        if (state.autoScrollEnabled) {
+            requestAnimationFrame(function () {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            });
+        }
+    }
+
+    // ==================== Bridge Event Listeners ====================
+
+    function setupBridgeListeners() {
+        bridge.on('cli_state_changed', handleCliStateChanged);
+        bridge.on('busy_state_changed', handleBusyStateChanged);
+        bridge.on('session_initialized', handleSessionInitialized);
+        bridge.on('user_message_added', handleUserMessageAdded);
+        bridge.on('assistant_message_started', handleAssistantMessageStarted);
+        bridge.on('streaming_text_appended', handleStreamingTextAppended);
+        bridge.on('tool_call_started', handleToolCallStarted);
+        bridge.on('tool_call_input_delta', handleToolCallInputDelta);
+        bridge.on('tool_call_completed', handleToolCallCompleted);
+        bridge.on('assistant_message_completed', handleAssistantMessageCompleted);
+        bridge.on('result_received', handleResultReceived);
+        bridge.on('permission_requested', handlePermissionRequested);
+        bridge.on('extended_thinking_started', handleExtendedThinkingStarted);
+        bridge.on('extended_thinking_ended', handleExtendedThinkingEnded);
+        bridge.on('error', handleError);
+        bridge.on('conversation_cleared', handleConversationCleared);
+        bridge.on('generation_stopped', handleGenerationStopped);
+        bridge.on('system_message', handleSystemMessage);
+        bridge.on('slash_suggestions', handleSlashSuggestions);
+        bridge.on('file_suggestions', handleFileSuggestions);
+        bridge.on('command_picker_options', handleCommandPickerOptions);
+        bridge.on('set_theme', handleSetTheme);
+        bridge.on('set_enter_mode', function(data) {
+            state.ctrlEnterToSend = data.ctrlEnter === true;
+            // Update hint text
+            var hint = document.querySelector('.input-hint');
+            if (hint) {
+                hint.textContent = state.ctrlEnterToSend ? 'Ctrl+Enter ↵' : 'Enter ↵ | Shift+Enter ↵';
+            }
+        });
+        bridge.on('toast', function(data) {
+            if (data && data.message) showToast(data.message);
+        });
+        bridge.on('selection_indicator', handleSelectionIndicator);
+        bridge.on('edit_staged', handleEditStaged);
+        bridge.on('attachments_updated', handleAttachmentsUpdated);
+        bridge.on('attachments_cleared', handleAttachmentsCleared);
+    }
+
+    // ==================== Theme & RTL ====================
+
+    function handleSetTheme(data) {
+        if (data.theme === 'light') {
+            document.body.classList.add('light');
+        } else {
+            document.body.classList.remove('light');
+        }
+    }
+
+    // ==================== Selection Indicator ====================
+
+    function handleSelectionIndicator(data) {
+        var badge = document.getElementById('selection-badge');
+        if (!badge) {
+            badge = document.createElement('div');
+            badge.id = 'selection-badge';
+            badge.className = 'selection-badge';
+            var inputArea = document.querySelector('.input-area');
+            if (inputArea) inputArea.parentNode.insertBefore(badge, inputArea);
+        }
+        if (data.lineCount > 0) {
+            badge.textContent = data.lineCount + ' lines in ' + data.fileName;
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+    }
+
+    // ==================== Edit Staged (Accept/Reject) ====================
+
+    function handleEditStaged(data) {
+        var widget = document.createElement('div');
+        widget.className = 'edit-staged-widget';
+        widget.setAttribute('data-edit-id', data.editId);
+        widget.innerHTML = '<span class="edit-staged-icon">✏</span> Edited: <strong>' + escapeHtml(data.fileName) + '</strong>' +
+            '<div class="edit-staged-actions">' +
+            '<button class="edit-btn view-diff-btn" onclick="handleEditAction(\'' + data.editId + '\',\'view_diff\')">View Diff</button>' +
+            '<button class="edit-btn accept-btn" onclick="handleEditAction(\'' + data.editId + '\',\'accept_edit\')">Accept</button>' +
+            '<button class="edit-btn reject-btn" onclick="handleEditAction(\'' + data.editId + '\',\'reject_edit\')">Reject</button>' +
+            '</div>';
+        // Insert after the current assistant message
+        var msgs = document.getElementById('messages');
+        if (msgs) msgs.appendChild(widget);
+        scrollToBottom();
+    }
+
+    // Global handler for edit action buttons
+    window.handleEditAction = function(editId, action) {
+        bridge.sendToJava(action, { editId: editId });
+        // Remove widget after accept/reject
+        if (action !== 'view_diff') {
+            var widget = document.querySelector('.edit-staged-widget[data-edit-id="' + editId + '"]');
+            if (widget) widget.remove();
+        }
+    };
+
+    // ==================== Fork Context Menu ====================
+
+    var activeContextMenu = null;
+
+    function showForkContextMenu(e, messageEl) {
+        e.preventDefault();
+        dismissContextMenu();
+
+        var idx = messageEl.getAttribute('data-message-index');
+        if (idx === null) return;
+
+        var menu = document.createElement('div');
+        menu.className = 'fork-context-menu';
+
+        var item = document.createElement('div');
+        item.className = 'fork-context-menu-item';
+        item.innerHTML = '<span class="fork-icon">\u2442</span> Fork from here';
+        item.addEventListener('click', function() {
+            bridge.sendToJava('fork_from_message', { messageIndex: parseInt(idx, 10) });
+            dismissContextMenu();
+        });
+        menu.appendChild(item);
+
+        // Position at cursor
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        document.body.appendChild(menu);
+
+        // Adjust if overflowing viewport
+        var rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = (window.innerWidth - rect.width - 8) + 'px';
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = (window.innerHeight - rect.height - 8) + 'px';
+        }
+
+        activeContextMenu = menu;
+    }
+
+    function dismissContextMenu() {
+        if (activeContextMenu) {
+            activeContextMenu.remove();
+            activeContextMenu = null;
+        }
+    }
+
+    // Dismiss on click outside or Escape
+    document.addEventListener('click', dismissContextMenu);
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            dismissContextMenu();
+            // Cancel streaming from anywhere on the page
+            if (state.isStreaming) {
+                e.preventDefault();
+                bridge.sendToJava('stop_generation', {});
+            }
+        }
+    });
+
+    // Attach context menu to messages container (event delegation)
+    messagesContainer.addEventListener('contextmenu', function(e) {
+        var msgEl = e.target.closest('.message');
+        if (msgEl && msgEl.hasAttribute('data-message-index')) {
+            showForkContextMenu(e, msgEl);
+        }
+    });
+
+    // ==================== RTL Detection ====================
+
+    /**
+     * Updates the input textarea direction based on the first significant character.
+     * Called on every input event so the textarea flips to RTL when typing Hebrew/Arabic.
+     */
+    function updateInputDirection() {
+        var text = messageInput.value;
+        var firstChar = text.replace(/[\s\n\r\t@#/\-`>]/g, '').charAt(0);
+        if (firstChar && /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(firstChar)) {
+            messageInput.style.direction = 'rtl';
+            messageInput.style.textAlign = 'right';
+        } else {
+            messageInput.style.direction = 'ltr';
+            messageInput.style.textAlign = 'left';
+        }
+    }
+
+    // Attach input direction listener
+    messageInput.addEventListener('input', updateInputDirection);
+
+    /**
+     * Detects RTL text and applies dir="rtl" to message content elements.
+     */
+    function applyRtlIfNeeded(el) {
+        var text = el.textContent || '';
+        // Check first significant character for RTL scripts (Hebrew, Arabic, etc.)
+        var firstChar = text.replace(/[\s\n\r\t#*\-`>]/g, '').charAt(0);
+        if (firstChar && /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\uFB50-\uFDFF\uFE70-\uFEFF]/.test(firstChar)) {
+            el.setAttribute('dir', 'rtl');
+        } else {
+            el.setAttribute('dir', 'auto');
+        }
+    }
+
+    // ==================== Event Handlers ====================
+
+    function handleCliStateChanged(data) {
+        state.isConnected = data.state === 'connected';
+        connectionStatus.className = 'status-indicator ' + data.state;
+
+        switch (data.state) {
+            case 'connected':
+                statusText.textContent = 'Connected';
+                reconnectBtn.classList.add('hidden');
+                break;
+            case 'disconnected':
+                statusText.textContent = 'Disconnected';
+                reconnectBtn.classList.remove('hidden');
+                setStreamingState(false);
+                removeLoadingIndicator();
+                break;
+            case 'error':
+                statusText.textContent = 'Error';
+                reconnectBtn.classList.remove('hidden');
+                setStreamingState(false);
+                removeLoadingIndicator();
+                break;
+        }
+    }
+
+    function handleBusyStateChanged(data) {
+        state.isBusy = data.busy;
+        setStreamingState(data.busy);
+    }
+
+    function handleSessionInitialized(data) {
+        if (data.model) {
+            sessionModel.textContent = data.model;
+            sessionModel.classList.add('visible');
+            statusModel.textContent = data.model;
+            statusModel.classList.remove('hidden');
+        }
+        if (data.sessionId) {
+            statusSessionId.textContent = data.sessionId.substring(0, 8);
+            statusSessionId.title = data.sessionId;
+            statusSessionId.classList.remove('hidden');
+        }
+    }
+
+    function handleUserMessageAdded(data) {
+        hideWelcome();
+        var el = createMessageElement('user', data);
+        el.setAttribute('data-message-index', state.messageIndex++);
+        messagesContainer.appendChild(el);
+        scrollToBottom();
+    }
+
+    function handleAssistantMessageStarted(data) {
+        hideWelcome();
+        removeThinkingIndicator();
+        removeLoadingIndicator();
+        setStreamingState(true);
+
+        var el = document.createElement('div');
+        el.className = 'message message-assistant';
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'message-content streaming-cursor';
+        el.appendChild(contentEl);
+
+        el.setAttribute('data-message-index', state.messageIndex++);
+        state.currentAssistantEl = el;
+        state.currentContentEl = contentEl;
+        state.streamingTextBuffer = '';
+
+        // Render any segments that already exist (e.g., replayed messages)
+        if (data.segments) {
+            for (var i = 0; i < data.segments.length; i++) {
+                var seg = data.segments[i];
+                if (seg.type === 'text' && seg.text) {
+                    state.streamingTextBuffer += seg.text;
+                } else if (seg.type === 'tool_use') {
+                    // Flush text before tool call
+                    if (state.streamingTextBuffer) {
+                        renderMarkdown(contentEl, state.streamingTextBuffer);
+                        state.streamingTextBuffer = '';
+                    }
+                    appendToolCallElement(el, seg);
+                }
+            }
+            if (state.streamingTextBuffer) {
+                renderMarkdown(contentEl, state.streamingTextBuffer);
+            }
+        }
+
+        messagesContainer.appendChild(el);
+        scrollToBottom();
+    }
+
+    function handleStreamingTextAppended(data) {
+        if (!state.currentContentEl) return;
+
+        state.streamingTextBuffer += data.delta;
+        renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
+        scrollToBottom();
+    }
+
+    function handleToolCallStarted(data) {
+        console.log('[TOOL_STARTED] toolId=' + data.toolId + ' toolName=' + data.toolName);
+        if (!state.currentAssistantEl) return;
+
+        // Flush any buffered text into the content element before the tool call
+        if (state.streamingTextBuffer && state.currentContentEl) {
+            state.currentContentEl.classList.remove('streaming-cursor');
+            renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
+            state.streamingTextBuffer = '';
+        }
+
+        appendToolCallElement(state.currentAssistantEl, data);
+        scrollToBottom();
+    }
+
+    function handleToolCallInputDelta(data) {
+        var toolEl = findToolCallElement(data.toolId);
+        if (!toolEl) return;
+
+        var inputContent = toolEl.querySelector('.tool-input-content');
+        if (inputContent) {
+            inputContent.textContent += data.delta;
+        }
+    }
+
+    function handleToolCallCompleted(data) {
+        console.log('[TOOL_COMPLETED] toolId=' + data.toolId + ' status=' + data.status + ' toolName=' + data.toolName);
+        var toolEl = findToolCallElement(data.toolId);
+        if (!toolEl) {
+            console.warn('[TOOL_COMPLETED] Element NOT FOUND for toolId=' + data.toolId);
+            return;
+        }
+        console.log('[TOOL_COMPLETED] Element found, updating to ' + data.status);
+
+        // Update status
+        toolEl.classList.remove('running');
+        if (data.status === 'failed') {
+            toolEl.classList.add('failed');
+        }
+
+        var statusEl = toolEl.querySelector('.tool-call-status');
+        if (statusEl) {
+            statusEl.className = 'tool-call-status ' + data.status;
+            statusEl.textContent = capitalizeFirst(data.status);
+        }
+
+        var iconEl = toolEl.querySelector('.tool-call-icon');
+        if (iconEl) {
+            iconEl.className = 'tool-call-icon ' + data.status;
+            iconEl.innerHTML = getStatusIcon(data.status);
+        }
+
+        // Update output
+        if (data.output) {
+            var body = toolEl.querySelector('.tool-call-body');
+            if (body) {
+                var existingOutputLabel = body.querySelector('.tool-output-label');
+                if (!existingOutputLabel) {
+                    var outputLabel = document.createElement('div');
+                    outputLabel.className = 'tool-call-section-label tool-output-label';
+                    outputLabel.textContent = 'Output';
+                    body.appendChild(outputLabel);
+
+                    var outputContent = document.createElement('div');
+                    outputContent.className = 'tool-call-section-content';
+                    outputContent.textContent = truncateOutput(data.output);
+                    body.appendChild(outputContent);
+                }
+            }
+        }
+
+        // Update summary
+        if (data.summary) {
+            var summaryEl = toolEl.querySelector('.tool-call-summary');
+            if (summaryEl) {
+                summaryEl.textContent = data.summary;
+            }
+        }
+
+        scrollToBottom();
+    }
+
+    function handleAssistantMessageCompleted(data) {
+        // Flush any remaining text
+        if (state.streamingTextBuffer && state.currentContentEl) {
+            renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
+            state.streamingTextBuffer = '';
+        }
+
+        // Remove streaming cursor
+        if (state.currentContentEl) {
+            state.currentContentEl.classList.remove('streaming-cursor');
+            applyRtlIfNeeded(state.currentContentEl);
+        }
+
+        // Apply RTL to all content elements in this assistant message
+        if (state.currentAssistantEl) {
+            var contentEls = state.currentAssistantEl.querySelectorAll('.message-content');
+            for (var i = 0; i < contentEls.length; i++) {
+                applyRtlIfNeeded(contentEls[i]);
+            }
+        }
+
+        removeThinkingIndicator();
+
+        // Create a new content element for text after tool calls, if needed
+        state.currentAssistantEl = null;
+        state.currentContentEl = null;
+        setStreamingState(false);
+        scrollToBottom();
+    }
+
+    function handleResultReceived(data) {
+        setStreamingState(false);
+        removeLoadingIndicator();
+
+        if (data.formattedTokens || data.formattedCost) {
+            var parts = [];
+            if (data.formattedTokens) parts.push(data.formattedTokens);
+            if (data.formattedCost) parts.push(data.formattedCost);
+            if (data.formattedDuration) parts.push(data.formattedDuration);
+            usageInfo.textContent = parts.join(' | ');
+            usageInfo.classList.remove('hidden');
+        }
+
+        // Update enhanced status bar fields
+        if (data.formattedTokens) {
+            statusTokens.textContent = data.formattedTokens;
+            statusTokens.classList.remove('hidden');
+        }
+        if (data.formattedCost) {
+            statusCost.textContent = data.formattedCost;
+            statusCost.classList.remove('hidden');
+        }
+    }
+
+    function handlePermissionRequested(data) {
+        state.pendingPermission = {
+            toolUseId: data.toolUseId || null,
+            requestId: data.requestId || null
+        };
+
+        permissionToolName.textContent = data.toolName || 'Tool Permission';
+        permissionDescription.textContent = data.description || 'Claude wants to use a tool.';
+        permissionBanner.classList.remove('hidden');
+        // Trigger pulse animation to draw attention
+        permissionBanner.classList.remove('pulse');
+        void permissionBanner.offsetWidth; // force reflow
+        permissionBanner.classList.add('pulse');
+        scrollToBottom();
+    }
+
+    function handleExtendedThinkingStarted() {
+        if (state.thinkingEl) return;
+
+        hideWelcome();
+
+        state.thinkingEl = document.createElement('div');
+        state.thinkingEl.className = 'message message-assistant';
+
+        var indicator = document.createElement('div');
+        indicator.className = 'thinking-indicator';
+        indicator.innerHTML =
+            '<div class="thinking-dots"><span></span><span></span><span></span></div>' +
+            '<span class="thinking-text">Thinking...</span>';
+
+        state.thinkingEl.appendChild(indicator);
+        messagesContainer.appendChild(state.thinkingEl);
+        scrollToBottom();
+    }
+
+    function handleExtendedThinkingEnded() {
+        removeThinkingIndicator();
+    }
+
+    function handleError(data) {
+        removeLoadingIndicator();
+        var el = document.createElement('div');
+        el.className = 'message message-error';
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'message-content';
+        contentEl.textContent = data.message || 'An error occurred.';
+        el.appendChild(contentEl);
+
+        messagesContainer.appendChild(el);
+        scrollToBottom();
+    }
+
+    function handleConversationCleared() {
+        // Remove all messages
+        while (messagesContainer.firstChild) {
+            messagesContainer.removeChild(messagesContainer.firstChild);
+        }
+
+        // Re-add welcome message
+        var welcome = createWelcomeElement();
+        messagesContainer.appendChild(welcome);
+
+        state.currentAssistantEl = null;
+        state.currentContentEl = null;
+        state.streamingTextBuffer = '';
+        state.hasMessages = false;
+        state.thinkingEl = null;
+        state.loadingEl = null;
+        state.messageIndex = 0;
+        clearAttachments();
+
+        usageInfo.classList.add('hidden');
+        sessionModel.classList.remove('visible');
+        statusSessionId.classList.add('hidden');
+        statusModel.classList.add('hidden');
+        statusTokens.classList.add('hidden');
+        statusCost.classList.add('hidden');
+        hidePermissionBanner();
+    }
+
+    function handleGenerationStopped() {
+        setStreamingState(false);
+        removeLoadingIndicator();
+        if (state.currentContentEl) {
+            state.currentContentEl.classList.remove('streaming-cursor');
+        }
+        removeThinkingIndicator();
+    }
+
+    // ==================== UI Helpers ====================
+
+    function setStreamingState(streaming) {
+        state.isStreaming = streaming;
+        sendBtn.classList.toggle('hidden', streaming);
+        stopBtn.classList.toggle('hidden', !streaming);
+        if (headerStopBtn) { headerStopBtn.disabled = !streaming; }
+        updateSendButton();
+    }
+
+    function hideWelcome() {
+        if (!state.hasMessages && welcomeMessage) {
+            welcomeMessage.style.display = 'none';
+            state.hasMessages = true;
+        }
+    }
+
+    function hidePermissionBanner() {
+        permissionBanner.classList.add('hidden');
+        state.pendingPermission = null;
+    }
+
+    function removeThinkingIndicator() {
+        if (state.thinkingEl && state.thinkingEl.parentNode) {
+            state.thinkingEl.parentNode.removeChild(state.thinkingEl);
+        }
+        state.thinkingEl = null;
+    }
+
+    function createWelcomeElement() {
+        var el = document.createElement('div');
+        el.id = 'welcome-message';
+        el.innerHTML =
+            '<div class="welcome-icon">' +
+            '<svg width="32" height="32" viewBox="0 0 32 32" fill="none">' +
+            '<path fill="var(--claude-orange)" d="M16 2L18.8 11.2C19 11.8 19.4 12.3 20 12.5L29 16L20 19.5C19.4 19.7 19 20.2 18.8 20.8L16 30L13.2 20.8C13 20.2 12.6 19.7 12 19.5L3 16L12 12.5C12.6 12.3 13 11.8 13.2 11.2L16 2Z"/>' +
+            '</svg></div>' +
+            '<h2>Claude Code</h2>' +
+            '<p>Ask Claude to help with your code.<br>' +
+            'Use <code>@</code> to reference files, <code>/</code> for commands.</p>';
+        return el;
+    }
+
+    // ==================== Message Element Creation ====================
+
+    function createMessageElement(role, data) {
+        var el = document.createElement('div');
+        el.className = 'message message-' + role;
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'message-content';
+
+        if (role === 'user') {
+            // User messages: render as plain text (no markdown)
+            var text = extractTextFromMessage(data);
+            contentEl.textContent = text;
+        } else if (role === 'assistant') {
+            var text = extractTextFromMessage(data);
+            if (text) {
+                renderMarkdown(contentEl, text);
+            }
+        }
+
+        // Apply RTL detection to message content
+        applyRtlIfNeeded(contentEl);
+
+        el.appendChild(contentEl);
+        return el;
+    }
+
+    function extractTextFromMessage(data) {
+        if (!data.segments) return '';
+        var text = '';
+        for (var i = 0; i < data.segments.length; i++) {
+            if (data.segments[i].type === 'text') {
+                text += data.segments[i].text || '';
+            }
+        }
+        return text;
+    }
+
+    // ==================== Tool Call Rendering ====================
+
+    function appendToolCallElement(parentEl, toolData) {
+        var toolEl = document.createElement('div');
+        toolEl.className = 'tool-call ' + (toolData.status || 'running');
+        toolEl.setAttribute('data-tool-id', toolData.toolId || '');
+
+        // Header
+        var header = document.createElement('div');
+        header.className = 'tool-call-header';
+        header.addEventListener('click', function () {
+            toolEl.classList.toggle('expanded');
+        });
+
+        // Chevron
+        var chevron = document.createElement('div');
+        chevron.className = 'tool-call-chevron';
+        chevron.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+            '<path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        header.appendChild(chevron);
+
+        // Status icon
+        var iconEl = document.createElement('div');
+        iconEl.className = 'tool-call-icon ' + (toolData.status || 'running');
+        iconEl.innerHTML = getStatusIcon(toolData.status || 'running');
+        header.appendChild(iconEl);
+
+        // Tool name
+        var nameEl = document.createElement('span');
+        nameEl.className = 'tool-call-name';
+        nameEl.textContent = toolData.displayName || toolData.toolName || 'Tool';
+        header.appendChild(nameEl);
+
+        // Summary
+        var summaryEl = document.createElement('span');
+        summaryEl.className = 'tool-call-summary';
+        summaryEl.textContent = toolData.summary || '';
+        header.appendChild(summaryEl);
+
+        // Status badge
+        var statusBadge = document.createElement('span');
+        statusBadge.className = 'tool-call-status ' + (toolData.status || 'running');
+        statusBadge.textContent = capitalizeFirst(toolData.status || 'running');
+        header.appendChild(statusBadge);
+
+        toolEl.appendChild(header);
+
+        // Body (expandable)
+        var body = document.createElement('div');
+        body.className = 'tool-call-body';
+
+        // Input section
+        if (toolData.input) {
+            var inputLabel = document.createElement('div');
+            inputLabel.className = 'tool-call-section-label';
+            inputLabel.textContent = 'Input';
+            body.appendChild(inputLabel);
+
+            var inputContent = document.createElement('div');
+            inputContent.className = 'tool-call-section-content tool-input-content';
+            inputContent.textContent = toolData.input;
+            body.appendChild(inputContent);
+        } else {
+            // Create empty input area for streaming
+            var inputLabel = document.createElement('div');
+            inputLabel.className = 'tool-call-section-label';
+            inputLabel.textContent = 'Input';
+            body.appendChild(inputLabel);
+
+            var inputContent = document.createElement('div');
+            inputContent.className = 'tool-call-section-content tool-input-content';
+            body.appendChild(inputContent);
+        }
+
+        // Output section (if already available)
+        if (toolData.output) {
+            var outputLabel = document.createElement('div');
+            outputLabel.className = 'tool-call-section-label tool-output-label';
+            outputLabel.textContent = 'Output';
+            body.appendChild(outputLabel);
+
+            var outputContent = document.createElement('div');
+            outputContent.className = 'tool-call-section-content';
+            outputContent.textContent = truncateOutput(toolData.output);
+            body.appendChild(outputContent);
+        }
+
+        toolEl.appendChild(body);
+
+        // Insert before the current content element if it exists, otherwise at the end
+        if (state.currentContentEl && state.currentContentEl.parentNode === parentEl) {
+            parentEl.insertBefore(toolEl, state.currentContentEl);
+        } else {
+            parentEl.appendChild(toolEl);
+        }
+
+        // Create a new content element after the tool call for subsequent text
+        var newContentEl = document.createElement('div');
+        newContentEl.className = 'message-content streaming-cursor';
+        parentEl.appendChild(newContentEl);
+        state.currentContentEl = newContentEl;
+        state.streamingTextBuffer = '';
+    }
+
+    function findToolCallElement(toolId) {
+        if (!toolId) return null;
+        return messagesContainer.querySelector('.tool-call[data-tool-id="' + CSS.escape(toolId) + '"]');
+    }
+
+    function getStatusIcon(status) {
+        switch (status) {
+            case 'running':
+                return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+                    '<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5" stroke-dasharray="6 3"/></svg>';
+            case 'completed':
+                return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+                    '<path d="M4 8l3 3 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            case 'failed':
+                return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none">' +
+                    '<path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+            default:
+                return '';
+        }
+    }
+
+    function truncateOutput(output) {
+        if (!output) return '';
+        var maxLen = 2000;
+        if (output.length > maxLen) {
+            return output.substring(0, maxLen) + '\n... (truncated)';
+        }
+        return output;
+    }
+
+    // ==================== Markdown Rendering ====================
+
+    /**
+     * Renders markdown text into an HTML element.
+     * Supports: headers, bold, italic, inline code, code blocks, links, lists, blockquotes, horizontal rules.
+     */
+    function renderMarkdown(el, text) {
+        el.innerHTML = markdownToHtml(text);
+
+        // Add copy buttons to code blocks
+        var codeBlocks = el.querySelectorAll('.code-block-wrapper');
+        for (var i = 0; i < codeBlocks.length; i++) {
+            setupCodeBlockCopy(codeBlocks[i]);
+            setupCodeBlockApply(codeBlocks[i]);
+            setupCodeBlockInsert(codeBlocks[i]);
+        }
+
+        // Apply RTL punctuation fixes
+        applyRtlFixes(el);
+    }
+
+    function markdownToHtml(text) {
+        if (!text) return '';
+
+        // Split into lines for block-level processing
+        var lines = text.split('\n');
+        var html = '';
+        var inCodeBlock = false;
+        var codeBlockLang = '';
+        var codeBlockContent = '';
+        var inList = false;
+        var listType = '';
+        var inBlockquote = false;
+        var blockquoteContent = '';
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+
+            // Code block fence
+            if (line.match(/^```/)) {
+                if (inCodeBlock) {
+                    // End code block
+                    html += renderCodeBlock(codeBlockLang, codeBlockContent);
+                    inCodeBlock = false;
+                    codeBlockLang = '';
+                    codeBlockContent = '';
+                } else {
+                    // Close any open list or blockquote
+                    if (inList) {
+                        html += '</' + listType + '>';
+                        inList = false;
+                    }
+                    if (inBlockquote) {
+                        html += '<blockquote>' + inlineMarkdown(blockquoteContent.trim()) + '</blockquote>';
+                        inBlockquote = false;
+                        blockquoteContent = '';
+                    }
+                    // Start code block
+                    inCodeBlock = true;
+                    codeBlockLang = line.substring(3).trim();
+                }
+                continue;
+            }
+
+            if (inCodeBlock) {
+                codeBlockContent += (codeBlockContent ? '\n' : '') + line;
+                continue;
+            }
+
+            // Blockquote
+            if (line.match(/^>\s?/)) {
+                if (inList) {
+                    html += '</' + listType + '>';
+                    inList = false;
+                }
+                inBlockquote = true;
+                blockquoteContent += line.replace(/^>\s?/, '') + '\n';
+                continue;
+            } else if (inBlockquote) {
+                html += '<blockquote>' + inlineMarkdown(blockquoteContent.trim()) + '</blockquote>';
+                inBlockquote = false;
+                blockquoteContent = '';
+            }
+
+            // Horizontal rule
+            if (line.match(/^(\*{3,}|-{3,}|_{3,})\s*$/)) {
+                if (inList) {
+                    html += '</' + listType + '>';
+                    inList = false;
+                }
+                html += '<hr>';
+                continue;
+            }
+
+            // Headers
+            var headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+            if (headerMatch) {
+                if (inList) {
+                    html += '</' + listType + '>';
+                    inList = false;
+                }
+                var level = headerMatch[1].length;
+                html += '<h' + level + '>' + inlineMarkdown(headerMatch[2]) + '</h' + level + '>';
+                continue;
+            }
+
+            // Unordered list
+            var ulMatch = line.match(/^(\s*)[*\-+]\s+(.+)$/);
+            if (ulMatch) {
+                if (!inList || listType !== 'ul') {
+                    if (inList) html += '</' + listType + '>';
+                    html += '<ul>';
+                    inList = true;
+                    listType = 'ul';
+                }
+                html += '<li>' + inlineMarkdown(ulMatch[2]) + '</li>';
+                continue;
+            }
+
+            // Ordered list
+            var olMatch = line.match(/^(\s*)\d+\.\s+(.+)$/);
+            if (olMatch) {
+                if (!inList || listType !== 'ol') {
+                    if (inList) html += '</' + listType + '>';
+                    html += '<ol>';
+                    inList = true;
+                    listType = 'ol';
+                }
+                html += '<li>' + inlineMarkdown(olMatch[2]) + '</li>';
+                continue;
+            }
+
+            // If we were in a list but this line is not a list item
+            if (inList && line.trim() === '') {
+                html += '</' + listType + '>';
+                inList = false;
+                continue;
+            }
+
+            if (inList && !ulMatch && !olMatch) {
+                html += '</' + listType + '>';
+                inList = false;
+            }
+
+            // Empty line
+            if (line.trim() === '') {
+                continue;
+            }
+
+            // Regular paragraph
+            html += '<p>' + inlineMarkdown(line) + '</p>';
+        }
+
+        // Close any open blocks
+        if (inCodeBlock) {
+            html += renderCodeBlock(codeBlockLang, codeBlockContent);
+        }
+        if (inList) {
+            html += '</' + listType + '>';
+        }
+        if (inBlockquote) {
+            html += '<blockquote>' + inlineMarkdown(blockquoteContent.trim()) + '</blockquote>';
+        }
+
+        return html;
+    }
+
+    /**
+     * Process inline markdown: bold, italic, code, links, strikethrough.
+     */
+    function inlineMarkdown(text) {
+        if (!text) return '';
+
+        // Escape HTML first (but preserve our own tags later)
+        text = escapeHtml(text);
+
+        // Inline code (must be before bold/italic to avoid conflicts)
+        text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // Bold + Italic
+        text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+        text = text.replace(/___(.+?)___/g, '<strong><em>$1</em></strong>');
+
+        // Bold
+        text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+        // Italic
+        text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        text = text.replace(/_(.+?)_/g, '<em>$1</em>');
+
+        // Strikethrough
+        text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+        // Links: [text](url)
+        text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+        // Auto-link URLs
+        text = text.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+
+        return text;
+    }
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(text));
+        return div.innerHTML;
+    }
+
+    function renderCodeBlock(lang, code) {
+        var escapedCode = escapeHtml(code);
+        var langDisplay = lang || 'text';
+
+        // Apply syntax highlighting if available
+        var highlightedCode = escapedCode;
+        if (window.syntaxHighlight && lang) {
+            try {
+                highlightedCode = window.syntaxHighlight.highlight(escapedCode, lang);
+            } catch (e) {
+                // Fallback to plain escaped code
+                highlightedCode = escapedCode;
+            }
+        }
+
+        return '<div class="code-block-wrapper">' +
+            '<div class="code-block-header">' +
+            '<span class="code-block-lang">' + escapeHtml(langDisplay) + '</span>' +
+            '<div class="code-block-actions">' +
+            '<button class="code-block-btn code-block-copy" data-code="' + escapedCode.replace(/"/g, '&quot;') + '">' +
+            '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+            '<rect x="5" y="5" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/>' +
+            '<path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2" stroke="currentColor" stroke-width="1.5"/>' +
+            '</svg> Copy</button>' +
+            '<button class="code-block-btn code-block-apply" title="Apply to Editor">' +
+            '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+            '<path d="M2 3h12M2 7h8M2 11h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>' +
+            '<path d="M11 10l2 2 3-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg> Apply</button>' +
+            '<button class="code-block-btn code-block-insert" title="Insert at Cursor">' +
+            '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+            '<path d="M8 2v12M4 10l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg> Insert</button>' +
+            '</div></div>' +
+            '<pre><code class="hljs">' + highlightedCode + '</code></pre></div>';
+    }
+
+    function setupCodeBlockCopy(wrapper) {
+        var copyBtn = wrapper.querySelector('.code-block-copy');
+        if (!copyBtn) return;
+
+        copyBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var codeEl = wrapper.querySelector('pre code');
+            var text = codeEl ? codeEl.textContent : '';
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () {
+                    showCopied(copyBtn);
+                }).catch(function () {
+                    fallbackCopy(text, copyBtn);
+                });
+            } else {
+                fallbackCopy(text, copyBtn);
+            }
+        });
+    }
+
+    function fallbackCopy(text, btn) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showCopied(btn);
+        } catch (e) {
+            console.error('Copy failed:', e);
+        }
+        document.body.removeChild(textarea);
+    }
+
+    function showCopied(btn) {
+        btn.classList.add('copied');
+        var originalHtml = btn.innerHTML;
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+            '<path d="M4 8l3 3 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg> Copied!';
+        setTimeout(function () {
+            btn.classList.remove('copied');
+            btn.innerHTML = originalHtml;
+        }, 2000);
+    }
+
+    function setupCodeBlockApply(wrapper) {
+        var applyBtn = wrapper.querySelector('.code-block-apply');
+        if (!applyBtn) return;
+        applyBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var codeEl = wrapper.querySelector('pre code');
+            var text = codeEl ? codeEl.textContent : '';
+            bridge.sendToJava('apply_to_editor', { code: text });
+            showButtonFeedback(applyBtn, 'Applied!');
+        });
+    }
+
+    function setupCodeBlockInsert(wrapper) {
+        var insertBtn = wrapper.querySelector('.code-block-insert');
+        if (!insertBtn) return;
+        insertBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var codeEl = wrapper.querySelector('pre code');
+            var text = codeEl ? codeEl.textContent : '';
+            bridge.sendToJava('insert_at_cursor', { code: text });
+            showButtonFeedback(insertBtn, 'Inserted!');
+        });
+    }
+
+    function showButtonFeedback(btn, msg) {
+        var originalHtml = btn.innerHTML;
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none">' +
+            '<path d="M4 8l3 3 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg> ' + msg;
+        btn.classList.add('copied');
+        setTimeout(function () {
+            btn.classList.remove('copied');
+            btn.innerHTML = originalHtml;
+        }, 2000);
+    }
+
+    // ==================== System Messages ====================
+
+    function handleSystemMessage(data) {
+        hideWelcome();
+        var el = document.createElement('div');
+        el.className = 'message message-system';
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'message-content';
+        if (data.text) {
+            renderMarkdown(contentEl, data.text);
+        }
+        el.appendChild(contentEl);
+
+        messagesContainer.appendChild(el);
+        scrollToBottom();
+    }
+
+    // ==================== Slash Command Menu ====================
+
+    function handleSlashInput() {
+        var text = messageInput.value;
+        // Show slash menu when input starts with / and has no spaces yet (typing a command)
+        if (text.startsWith('/') && !text.includes(' ') && text.length <= 20) {
+            var prefix = text.toLowerCase();
+            var matches = [];
+            for (var i = 0; i < SLASH_COMMANDS.length; i++) {
+                if (SLASH_COMMANDS[i].name.indexOf(prefix) === 0) {
+                    matches.push(SLASH_COMMANDS[i]);
+                }
+            }
+            if (matches.length > 0) {
+                showSlashMenu(matches);
+            } else {
+                hideSlashMenu();
+            }
+        } else {
+            hideSlashMenu();
+        }
+    }
+
+    function handleSlashSuggestions(data) {
+        // Legacy handler for bridge-based suggestions (kept for backward compatibility)
+        if (!data.suggestions || data.suggestions.length === 0) {
+            hideSlashMenu();
+            return;
+        }
+        showSlashMenu(data.suggestions);
+    }
+
+    function showSlashMenu(suggestions) {
+        if (!slashMenuEl) {
+            slashMenuEl = document.createElement('div');
+            slashMenuEl.className = 'slash-menu';
+            // Insert before the input area
+            var inputArea = document.getElementById('input-area');
+            if (inputArea && inputArea.parentNode) {
+                inputArea.parentNode.insertBefore(slashMenuEl, inputArea);
+            } else {
+                document.body.appendChild(slashMenuEl);
+            }
+        }
+
+        slashMenuItems = suggestions;
+        slashMenuSelectedIndex = 0;
+
+        var html = '';
+        for (var i = 0; i < suggestions.length; i++) {
+            var s = suggestions[i];
+            html += '<div class="slash-menu-item' + (i === 0 ? ' selected' : '') + '" data-index="' + i + '">';
+            html += '<span class="slash-menu-cmd">' + escapeHtml(s.name) + '</span>';
+            html += '<span class="slash-menu-desc">' + escapeHtml(s.description) + '</span>';
+            if (s.hasSubOptions) {
+                html += '<span class="slash-menu-badge">›</span>';
+            } else if (s.local) {
+                html += '<span class="slash-menu-badge">plugin</span>';
+            }
+            html += '</div>';
+        }
+
+        slashMenuEl.innerHTML = html;
+        slashMenuEl.style.display = 'block';
+
+        // Add click handlers
+        var items = slashMenuEl.querySelectorAll('.slash-menu-item');
+        for (var j = 0; j < items.length; j++) {
+            (function (idx) {
+                items[idx].addEventListener('click', function () {
+                    selectSlashMenuItem(idx);
+                });
+                items[idx].addEventListener('mouseenter', function () {
+                    slashMenuSelectedIndex = idx;
+                    updateSlashMenuSelection();
+                });
+            })(j);
+        }
+    }
+
+    function hideSlashMenu() {
+        if (slashMenuEl) {
+            slashMenuEl.style.display = 'none';
+        }
+        slashMenuSelectedIndex = -1;
+    }
+
+    function updateSlashMenuSelection() {
+        if (!slashMenuEl) return;
+        var items = slashMenuEl.querySelectorAll('.slash-menu-item');
+        for (var i = 0; i < items.length; i++) {
+            if (i === slashMenuSelectedIndex) {
+                items[i].classList.add('selected');
+            } else {
+                items[i].classList.remove('selected');
+            }
+        }
+    }
+
+    function selectSlashMenuItem(index) {
+        if (index < 0 || index >= slashMenuItems.length) return;
+        var cmd = slashMenuItems[index];
+        messageInput.value = '';
+        messageInput.focus();
+        hideSlashMenu();
+        autoResizeTextarea();
+        updateSendButton();
+
+        // If command has local sub-options, show the picker directly (no bridge round-trip)
+        var localSubOptions = COMMAND_SUB_OPTIONS[cmd.name];
+        if (localSubOptions && localSubOptions.length > 0) {
+            commandPickerCommand = cmd.name;
+            showCommandPicker(localSubOptions);
+            return;
+        }
+
+        // Otherwise send to Java for execution
+        bridge.sendToJava('execute_slash_command', { command: cmd.name });
+    }
+
+    // ==================== Command Sub-Picker ====================
+
+    var commandPickerEl = null;
+    var commandPickerSelectedIndex = -1;
+    var commandPickerItems = [];
+    var commandPickerCommand = '';
+
+    function handleCommandPickerOptions(data) {
+        if (!data.options || data.options.length === 0) return;
+        commandPickerCommand = data.command || '';
+        showCommandPicker(data.options);
+    }
+
+    function showCommandPicker(options) {
+        if (!commandPickerEl) {
+            commandPickerEl = document.createElement('div');
+            commandPickerEl.className = 'slash-menu command-picker';
+            var inputArea = document.getElementById('input-area');
+            if (inputArea && inputArea.parentNode) {
+                inputArea.parentNode.insertBefore(commandPickerEl, inputArea);
+            } else {
+                document.body.appendChild(commandPickerEl);
+            }
+        }
+
+        commandPickerItems = options;
+        commandPickerSelectedIndex = 0;
+
+        var html = '<div class="command-picker-header">' + escapeHtml(commandPickerCommand) + '</div>';
+        for (var i = 0; i < options.length; i++) {
+            var opt = options[i];
+            html += '<div class="slash-menu-item' + (i === 0 ? ' selected' : '') + '" data-index="' + i + '">';
+            html += '<span class="slash-menu-cmd">' + escapeHtml(opt.label) + '</span>';
+            html += '<span class="slash-menu-desc">' + escapeHtml(opt.description) + '</span>';
+            html += '</div>';
+        }
+
+        commandPickerEl.innerHTML = html;
+        commandPickerEl.style.display = 'block';
+
+        // Add click/hover handlers
+        var items = commandPickerEl.querySelectorAll('.slash-menu-item');
+        for (var j = 0; j < items.length; j++) {
+            (function (idx) {
+                items[idx].addEventListener('click', function () {
+                    selectCommandPickerItem(idx);
+                });
+                items[idx].addEventListener('mouseenter', function () {
+                    commandPickerSelectedIndex = idx;
+                    updateCommandPickerSelection();
+                });
+            })(j);
+        }
+
+        messageInput.focus();
+    }
+
+    function hideCommandPicker() {
+        if (commandPickerEl) {
+            commandPickerEl.style.display = 'none';
+        }
+        commandPickerSelectedIndex = -1;
+        commandPickerItems = [];
+        commandPickerCommand = '';
+    }
+
+    function updateCommandPickerSelection() {
+        if (!commandPickerEl) return;
+        var items = commandPickerEl.querySelectorAll('.slash-menu-item');
+        for (var i = 0; i < items.length; i++) {
+            items[i].classList.toggle('selected', i === commandPickerSelectedIndex);
+        }
+    }
+
+    function selectCommandPickerItem(index) {
+        if (index < 0 || index >= commandPickerItems.length) return;
+        var opt = commandPickerItems[index];
+        var cmd = commandPickerCommand; // save before hideCommandPicker resets it
+        hideCommandPicker();
+        // Send as full slash command via send_message (e.g. "/model sonnet")
+        // This ensures it goes through the robust handleSendMessage -> handleLocalSlashCommand path
+        var fullCommand = cmd + ' ' + opt.value;
+        bridge.sendToJava('send_message', { message: fullCommand });
+    }
+
+    // ==================== @File Mention Menu ====================
+
+    function handleAtMentionInput() {
+        var text = messageInput.value;
+        var cursorPos = messageInput.selectionStart;
+
+        // Find the @ that precedes the cursor
+        var atIdx = -1;
+        for (var i = cursorPos - 1; i >= 0; i--) {
+            var ch = text.charAt(i);
+            if (ch === '@') {
+                atIdx = i;
+                break;
+            }
+            if (ch === ' ' || ch === '\n') break;
+        }
+
+        if (atIdx >= 0) {
+            var query = text.substring(atIdx + 1, cursorPos);
+            // Only trigger if query is reasonable (1-60 chars, no spaces at start)
+            if (query.length >= 0 && query.length <= 60 && !/^\s/.test(query)) {
+                fileMenuAtPos = atIdx;
+                bridge.sendToJava('file_search', { query: query });
+                return;
+            }
+        }
+        hideFileMenu();
+    }
+
+    function handleFileSuggestions(data) {
+        if (!data.files || data.files.length === 0) {
+            hideFileMenu();
+            return;
+        }
+        showFileMenu(data.files);
+    }
+
+    function showFileMenu(files) {
+        if (!fileMenuEl) {
+            fileMenuEl = document.createElement('div');
+            fileMenuEl.className = 'slash-menu file-menu';
+            var inputArea = document.getElementById('input-area');
+            if (inputArea && inputArea.parentNode) {
+                inputArea.parentNode.insertBefore(fileMenuEl, inputArea);
+            } else {
+                document.body.appendChild(fileMenuEl);
+            }
+        }
+
+        fileMenuItems = files;
+        fileMenuSelectedIndex = 0;
+
+        var html = '';
+        for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            html += '<div class="slash-menu-item' + (i === 0 ? ' selected' : '') + '" data-index="' + i + '">';
+            html += '<span class="file-menu-icon">📄</span>';
+            html += '<span class="file-menu-name">' + escapeHtml(f.name) + '</span>';
+            html += '<span class="file-menu-path">' + escapeHtml(f.relativePath || '') + '</span>';
+            html += '</div>';
+        }
+
+        fileMenuEl.innerHTML = html;
+        fileMenuEl.style.display = 'block';
+
+        var items = fileMenuEl.querySelectorAll('.slash-menu-item');
+        for (var j = 0; j < items.length; j++) {
+            (function (idx) {
+                items[idx].addEventListener('click', function () {
+                    selectFileMenuItem(idx);
+                });
+                items[idx].addEventListener('mouseenter', function () {
+                    fileMenuSelectedIndex = idx;
+                    updateFileMenuSelection();
+                });
+            })(j);
+        }
+    }
+
+    function hideFileMenu() {
+        if (fileMenuEl) {
+            fileMenuEl.style.display = 'none';
+        }
+        fileMenuSelectedIndex = -1;
+        fileMenuAtPos = -1;
+    }
+
+    function updateFileMenuSelection() {
+        if (!fileMenuEl) return;
+        var items = fileMenuEl.querySelectorAll('.slash-menu-item');
+        for (var i = 0; i < items.length; i++) {
+            items[i].classList.toggle('selected', i === fileMenuSelectedIndex);
+        }
+    }
+
+    function selectFileMenuItem(index) {
+        if (index < 0 || index >= fileMenuItems.length) return;
+        var file = fileMenuItems[index];
+        var text = messageInput.value;
+        var cursorPos = messageInput.selectionStart;
+
+        // Replace from @ position to cursor with @filepath
+        var before = text.substring(0, fileMenuAtPos);
+        var after = text.substring(cursorPos);
+        var mention = '@' + file.relativePath + ' ';
+        messageInput.value = before + mention + after;
+        messageInput.selectionStart = messageInput.selectionEnd = before.length + mention.length;
+        messageInput.focus();
+        hideFileMenu();
+        autoResizeTextarea();
+        updateSendButton();
+    }
+
+    // ==================== Popup Menu Navigation Abstraction ====================
+
+    function getActivePopupMenu() {
+        if (commandPickerEl && commandPickerEl.style.display !== 'none') {
+            return {
+                selectNext: function () {
+                    commandPickerSelectedIndex = Math.min(commandPickerSelectedIndex + 1, commandPickerItems.length - 1);
+                    updateCommandPickerSelection();
+                },
+                selectPrev: function () {
+                    commandPickerSelectedIndex = Math.max(commandPickerSelectedIndex - 1, 0);
+                    updateCommandPickerSelection();
+                },
+                getSelectedIndex: function () { return commandPickerSelectedIndex; },
+                selectCurrent: function () { selectCommandPickerItem(commandPickerSelectedIndex); },
+                hide: function () { hideCommandPicker(); }
+            };
+        }
+        if (fileMenuEl && fileMenuEl.style.display !== 'none') {
+            return {
+                selectNext: function () {
+                    fileMenuSelectedIndex = Math.min(fileMenuSelectedIndex + 1, fileMenuItems.length - 1);
+                    updateFileMenuSelection();
+                },
+                selectPrev: function () {
+                    fileMenuSelectedIndex = Math.max(fileMenuSelectedIndex - 1, 0);
+                    updateFileMenuSelection();
+                },
+                getSelectedIndex: function () { return fileMenuSelectedIndex; },
+                selectCurrent: function () { selectFileMenuItem(fileMenuSelectedIndex); },
+                hide: function () { hideFileMenu(); }
+            };
+        }
+        if (slashMenuEl && slashMenuEl.style.display !== 'none') {
+            return {
+                selectNext: function () {
+                    slashMenuSelectedIndex = Math.min(slashMenuSelectedIndex + 1, slashMenuItems.length - 1);
+                    updateSlashMenuSelection();
+                },
+                selectPrev: function () {
+                    slashMenuSelectedIndex = Math.max(slashMenuSelectedIndex - 1, 0);
+                    updateSlashMenuSelection();
+                },
+                getSelectedIndex: function () { return slashMenuSelectedIndex; },
+                selectCurrent: function () { selectSlashMenuItem(slashMenuSelectedIndex); },
+                hide: function () { hideSlashMenu(); }
+            };
+        }
+        return null;
+    }
+
+    // ==================== Loading Indicator ====================
+
+    function showLoadingIndicator() {
+        if (state.loadingEl) return;
+
+        state.loadingEl = document.createElement('div');
+        state.loadingEl.className = 'message message-assistant';
+
+        var indicator = document.createElement('div');
+        indicator.className = 'loading-indicator';
+        indicator.innerHTML = '<div class="loading-spinner"></div>' +
+            '<span>Waiting for response...</span>';
+
+        state.loadingEl.appendChild(indicator);
+        messagesContainer.appendChild(state.loadingEl);
+        scrollToBottom();
+    }
+
+    function removeLoadingIndicator() {
+        if (state.loadingEl && state.loadingEl.parentNode) {
+            state.loadingEl.parentNode.removeChild(state.loadingEl);
+        }
+        state.loadingEl = null;
+    }
+
+    // ==================== Drag & Drop / Image Attachments ====================
+
+    // ==================== Status Bar Toast ====================
+
+    function showToast(message, durationMs) {
+        durationMs = durationMs || 3000;
+        var existing = document.querySelector('.status-toast');
+        if (existing) existing.remove();
+
+        var toast = document.createElement('div');
+        toast.className = 'status-toast';
+        toast.textContent = message;
+        toast.style.animationDuration = '200ms, 200ms';
+        toast.style.animationDelay = '0ms, ' + (durationMs - 200) + 'ms';
+        document.getElementById('root').appendChild(toast);
+
+        setTimeout(function () {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, durationMs);
+    }
+
+    // Expose for Java bridge
+    window.__showToast = showToast;
+
+    // ==================== RTL Punctuation Correction ====================
+
+    var RTL_REGEX = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F]/;
+    var LEADING_PUNCT_REGEX = /^([.,:;!?\-–—'"»«\)\]\}>]+)(.+)/;
+
+    /**
+     * Detects if text starts with RTL characters.
+     */
+    function isRtlText(text) {
+        if (!text) return false;
+        // Find first letter character
+        for (var i = 0; i < text.length && i < 50; i++) {
+            if (RTL_REGEX.test(text[i])) return true;
+            if (/[a-zA-Z]/.test(text[i])) return false;
+        }
+        return false;
+    }
+
+    /**
+     * Moves leading punctuation to the end for RTL text display.
+     * E.g., ".שלום" → "שלום."
+     */
+    function fixRtlPunctuation(text) {
+        if (!text || !isRtlText(text)) return text;
+        var match = text.match(LEADING_PUNCT_REGEX);
+        if (match) {
+            return match[2] + match[1];
+        }
+        return text;
+    }
+
+    /**
+     * Applies RTL fix to all message content elements.
+     */
+    function applyRtlFixes(el) {
+        if (!el) return;
+        var paragraphs = el.querySelectorAll('p, li, span, div');
+        for (var i = 0; i < paragraphs.length; i++) {
+            var p = paragraphs[i];
+            if (p.children.length === 0 && p.textContent) {
+                var fixed = fixRtlPunctuation(p.textContent);
+                if (fixed !== p.textContent) {
+                    p.textContent = fixed;
+                }
+                // Set dir=auto for proper RTL alignment
+                if (isRtlText(p.textContent)) {
+                    p.setAttribute('dir', 'auto');
+                }
+            }
+        }
+    }
+
+    // ==================== File Attachment Chip Management ====================
+
+    function handleAttachmentsUpdated(data) {
+        var container = document.getElementById('file-chips');
+        if (!data.attachments || data.attachments.length === 0) {
+            container.classList.add('hidden');
+            container.innerHTML = '';
+            return;
+        }
+        container.classList.remove('hidden');
+        container.innerHTML = '';
+        for (var i = 0; i < data.attachments.length; i++) {
+            var chip = document.createElement('span');
+            chip.className = 'file-chip';
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'file-chip-name';
+            nameSpan.textContent = data.attachments[i].label;
+            nameSpan.title = data.attachments[i].path;
+            chip.appendChild(nameSpan);
+            var removeBtn = document.createElement('button');
+            removeBtn.className = 'file-chip-remove';
+            removeBtn.textContent = '×';
+            removeBtn.setAttribute('data-index', i);
+            removeBtn.addEventListener('click', function () {
+                var idx = parseInt(this.getAttribute('data-index'), 10);
+                bridge.sendToJava('remove_attachment', { index: idx });
+            });
+            chip.appendChild(removeBtn);
+            container.appendChild(chip);
+        }
+    }
+
+    function handleAttachmentsCleared() {
+        var container = document.getElementById('file-chips');
+        container.classList.add('hidden');
+        container.innerHTML = '';
+    }
+
+    // Wire attach button
+    var attachBtn = document.getElementById('attach-btn');
+    if (attachBtn) {
+        attachBtn.addEventListener('click', function () {
+            bridge.sendToJava('attach_file_dialog', {});
+        });
+    }
+
+    function setupDragAndDrop() {
+        var root = document.getElementById('root');
+        var dragCounter = 0;
+
+        root.addEventListener('dragenter', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter++;
+            if (hasImageFiles(e)) {
+                dropOverlay.classList.remove('hidden');
+            }
+        });
+
+        root.addEventListener('dragleave', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter--;
+            if (dragCounter <= 0) {
+                dragCounter = 0;
+                dropOverlay.classList.add('hidden');
+            }
+        });
+
+        root.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        root.addEventListener('drop', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter = 0;
+            dropOverlay.classList.add('hidden');
+
+            var files = e.dataTransfer.files;
+            for (var i = 0; i < files.length; i++) {
+                if (files[i].type.startsWith('image/')) {
+                    addImageAttachment(files[i]);
+                }
+            }
+        });
+
+        // Also handle paste (Ctrl+V image paste)
+        messageInput.addEventListener('paste', function (e) {
+            var items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].type.startsWith('image/')) {
+                    var file = items[i].getAsFile();
+                    if (file) {
+                        addImageAttachment(file);
+                        e.preventDefault();
+                    }
+                }
+            }
+        });
+    }
+
+    function hasImageFiles(e) {
+        if (e.dataTransfer && e.dataTransfer.types) {
+            for (var i = 0; i < e.dataTransfer.types.length; i++) {
+                if (e.dataTransfer.types[i] === 'Files') return true;
+            }
+        }
+        return false;
+    }
+
+    function addImageAttachment(file) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            var dataUrl = e.target.result;
+            // Extract base64 data (remove data:image/xxx;base64, prefix)
+            var base64 = dataUrl.split(',')[1];
+            state.attachedImages.push({ dataUrl: dataUrl, bytes: base64 });
+            updateAttachmentPreview();
+            updateSendButton();
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function removeAttachment(index) {
+        state.attachedImages.splice(index, 1);
+        updateAttachmentPreview();
+        updateSendButton();
+    }
+
+    function clearAttachments() {
+        state.attachedImages = [];
+        updateAttachmentPreview();
+    }
+
+    function updateAttachmentPreview() {
+        var existing = document.querySelector('.attachment-preview-bar');
+        if (existing) existing.remove();
+
+        if (state.attachedImages.length === 0) return;
+
+        var bar = document.createElement('div');
+        bar.className = 'attachment-preview-bar';
+
+        for (var i = 0; i < state.attachedImages.length; i++) {
+            (function (idx) {
+                var thumb = document.createElement('div');
+                thumb.className = 'attachment-thumb';
+                var img = document.createElement('img');
+                img.src = state.attachedImages[idx].dataUrl;
+                thumb.appendChild(img);
+
+                var removeBtn = document.createElement('button');
+                removeBtn.className = 'remove-attachment';
+                removeBtn.textContent = '×';
+                removeBtn.addEventListener('click', function () {
+                    removeAttachment(idx);
+                });
+                thumb.appendChild(removeBtn);
+
+                bar.appendChild(thumb);
+            })(i);
+        }
+
+        var inputArea = document.getElementById('input-area');
+        inputArea.insertBefore(bar, inputArea.firstChild);
+    }
+
+    // ==================== Utility ====================
+
+    function capitalizeFirst(str) {
+        if (!str) return '';
+        return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
+    // ==================== Start ====================
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();

@@ -15,12 +15,8 @@
         <toolWindow id="Claude"
                     anchor="right"
                     secondary="false"
-                    active="true"
                     icon="/icons/claude_13.svg"
                     factoryClass="com.anthropic.claude.intellij.ui.ClaudeToolWindowFactory"/>
-
-        <!-- Auto-show Claude tool window on project open -->
-        <postStartupActivity implementation="com.anthropic.claude.intellij.ui.ClaudeToolWindowFactory"/>
 
         <!-- Services -->
         <applicationService
