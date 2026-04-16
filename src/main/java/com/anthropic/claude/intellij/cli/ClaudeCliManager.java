@@ -554,6 +554,11 @@ public class ClaudeCliManager {
             command.add(config.getPermissionMode());
         }
 
+        if (config.getEffort() != null && !config.getEffort().isEmpty()) {
+            command.add("--effort");
+            command.add(config.getEffort());
+        }
+
         if (config.getModel() != null && !config.getModel().isEmpty()) {
             command.add("--model");
             command.add(config.getModel());

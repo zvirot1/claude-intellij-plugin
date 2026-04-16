@@ -30,6 +30,9 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
          */
         public String initialPermissionMode = "default";
 
+        /** Effort level: "" (auto), "low", "medium", "high", "max". */
+        public String effortLevel = "medium";
+
         /** Whether to auto-save files after Claude edits them. */
         public boolean autosave = true;
 

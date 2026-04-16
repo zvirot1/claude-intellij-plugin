@@ -46,6 +46,7 @@ public class ClaudeChatPanel implements Disposable {
     private AttachmentManager attachmentManager;
     private volatile boolean webviewReady = false;
     private boolean tabNameSet = false;
+    private String currentEffort;  // CLI --effort value: null/low/medium/high/max
     /** Maps control_request requestId → original toolInput for passing back in control_response. */
     private final java.util.concurrent.ConcurrentHashMap<String, Object> pendingToolInputs = new java.util.concurrent.ConcurrentHashMap<>();
     private IConversationListener conversationListener;
@@ -131,20 +132,23 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     private void initCliManager() {
-        // Use the project-service singletons so that StatusBar widget and other
-        // components share the same CliManager / ConversationModel instances.
-        com.anthropic.claude.intellij.service.ClaudeProjectService svc =
-            com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
-        cliManager = svc.getCliManager();
-        conversationModel = svc.getConversationModel();
+        // Each tab gets its own CLI process and ConversationModel for full isolation
+        // (like VS Code: each tab = separate CLI subprocess + separate conversation context).
+        cliManager = new ClaudeCliManager();
+        conversationModel = new ConversationModel();
 
-        // Wire the conversation model as a CLI message listener (singleton — remove first to avoid duplicates)
-        cliManager.removeMessageListener(conversationModel);
+        // Load effort from persisted settings
+        String savedEffort = ClaudeSettings.getInstance().getState().effortLevel;
+        currentEffort = (savedEffort != null && !savedEffort.isEmpty()) ? savedEffort : "medium";
+
+        // Wire the conversation model as a CLI message listener
         cliManager.addMessageListener(conversationModel);
 
-        // Wire EditDecisionManager with the project reference
-        com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project)
-            .getEditDecisionManager().setProject(project);
+        // Wire EditDecisionManager with the project reference (if service is available)
+        com.anthropic.claude.intellij.service.ClaudeProjectService svc = getProjectService();
+        if (svc != null) {
+            svc.getEditDecisionManager().setProject(project);
+        }
 
         // Listen to conversation model events and push them to the webview
         conversationListener = new IConversationListener() {
@@ -411,6 +415,12 @@ public class ClaudeChatPanel implements Disposable {
             case "fork_from_message":
                 handleForkFromMessage(payload);
                 break;
+            case "change_mode":
+                handleChangeMode(payload);
+                break;
+            case "change_effort":
+                handleChangeEffort(payload);
+                break;
             default:
                 LOG.warn("Unknown message type from webview: " + type);
         }
@@ -421,7 +431,7 @@ public class ClaudeChatPanel implements Disposable {
             java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
             String editId = com.anthropic.claude.intellij.util.JsonParser.getString(data, "editId");
             com.anthropic.claude.intellij.diff.EditDecisionManager edm =
-                com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project).getEditDecisionManager();
+                getProjectService() != null ? getProjectService().getEditDecisionManager() : null;
             if (edm != null) {
                 edm.viewDiff(project, editId);
             }
@@ -435,7 +445,7 @@ public class ClaudeChatPanel implements Disposable {
             java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
             String editId = com.anthropic.claude.intellij.util.JsonParser.getString(data, "editId");
             com.anthropic.claude.intellij.diff.EditDecisionManager edm =
-                com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project).getEditDecisionManager();
+                getProjectService() != null ? getProjectService().getEditDecisionManager() : null;
             if (edm != null) {
                 edm.acceptEdit(editId);
                 sendToast("Edit accepted");
@@ -450,7 +460,7 @@ public class ClaudeChatPanel implements Disposable {
             java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
             String editId = com.anthropic.claude.intellij.util.JsonParser.getString(data, "editId");
             com.anthropic.claude.intellij.diff.EditDecisionManager edm =
-                com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project).getEditDecisionManager();
+                getProjectService() != null ? getProjectService().getEditDecisionManager() : null;
             if (edm != null) {
                 edm.rejectEdit(editId);
                 sendToast("Edit reverted");
@@ -486,9 +496,10 @@ public class ClaudeChatPanel implements Disposable {
             LOG.info("Forking conversation at message " + forkIndex + " (" + forkedMessages.size() + " messages)");
 
             // Save current session before forking
-            com.anthropic.claude.intellij.service.ClaudeProjectService service =
-                com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
-            service.getSessionManager().saveCurrentSession(conversationModel);
+            com.anthropic.claude.intellij.service.ClaudeProjectService service = getProjectService();
+            if (service != null) {
+                service.getSessionManager().saveCurrentSession(conversationModel);
+            }
 
             // Stop current CLI
             if (cliManager.isRunning()) {
@@ -1368,6 +1379,87 @@ public class ClaudeChatPanel implements Disposable {
         }
     }
 
+    /**
+     * Handles permission mode change from webview.
+     * Stops the current CLI and restarts it with the new permission mode
+     * and --resume to preserve conversation memory.
+     */
+    private void handleChangeMode(String payload) {
+        try {
+            java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
+            String mode = com.anthropic.claude.intellij.util.JsonParser.getString(data, "mode");
+            if (mode == null || mode.isEmpty()) return;
+
+            LOG.info("Changing permission mode to: " + mode);
+
+            // Persist the mode to settings
+            ClaudeSettings.getInstance().getState().initialPermissionMode = mode;
+
+            // Get session ID for resume
+            String sessionId = null;
+            SessionInfo info = conversationModel.getSessionInfo();
+            if (info != null && info.getSessionId() != null && !info.getSessionId().isEmpty()) {
+                sessionId = info.getSessionId();
+            }
+
+            // Stop CLI and restart with new mode
+            if (cliManager.isRunning()) {
+                cliManager.stop();
+            }
+
+            // Build new config with the selected mode
+            String projectPath = project.getBasePath();
+            if (projectPath == null) projectPath = System.getProperty("user.home");
+            String cliPath = ClaudeCliManager.getCliPath();
+            if (cliPath == null) return;
+
+            ClaudeSettings.State settings = ClaudeSettings.getInstance().getState();
+            CliProcessConfig.Builder builder = new CliProcessConfig.Builder(cliPath, projectPath)
+                .permissionMode(mode);
+
+            if (settings.selectedModel != null && !settings.selectedModel.isEmpty()
+                    && !"default".equals(settings.selectedModel)) {
+                builder.model(settings.selectedModel);
+            }
+
+            // Resume session if we have a session ID
+            if (sessionId != null && !sessionId.isEmpty()) {
+                builder.resumeSessionId(sessionId);
+            }
+
+            // Apply current effort level
+            if (currentEffort != null && !currentEffort.isEmpty()) {
+                builder.effort(currentEffort);
+            }
+
+            cliManager.start(builder.build());
+
+            // Confirm mode change to webview
+            sendToWebview("mode_changed", "{\"mode\":" + jsonString(mode) + "}");
+        } catch (Exception e) {
+            LOG.error("Failed to change mode", e);
+            sendToWebview("error", "{\"message\":" + jsonString("Failed to change mode: " + e.getMessage()) + "}");
+        }
+    }
+
+    /**
+     * Handles effort level change from webview.
+     * Stores the effort level — it will be applied on the next CLI start/restart.
+     */
+    private void handleChangeEffort(String payload) {
+        try {
+            java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
+            String effort = com.anthropic.claude.intellij.util.JsonParser.getString(data, "effort");
+            // Empty string means "Auto" (no --effort flag)
+            currentEffort = (effort != null && !effort.isEmpty()) ? effort : null;
+            // Persist to settings so new tabs pick it up
+            ClaudeSettings.getInstance().getState().effortLevel = (currentEffort != null) ? currentEffort : "";
+            LOG.info("Effort level changed to: " + (currentEffort != null ? currentEffort : "auto"));
+        } catch (Exception e) {
+            LOG.warn("Failed to parse effort change", e);
+        }
+    }
+
     private void handleNewSession() {
         if (cliManager.isRunning()) {
             cliManager.stop();
@@ -1375,10 +1467,11 @@ public class ClaudeChatPanel implements Disposable {
         conversationModel.clear();
         cancelStreamingTimeout();
         // Clear checkpoints and pending edit decisions for the new session
-        com.anthropic.claude.intellij.service.ClaudeProjectService service =
-            com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
-        service.getCheckpointManager().clearCheckpoints();
-        service.getEditDecisionManager().clearAll();
+        com.anthropic.claude.intellij.service.ClaudeProjectService service = getProjectService();
+        if (service != null) {
+            service.getCheckpointManager().clearCheckpoints();
+            service.getEditDecisionManager().clearAll();
+        }
         eagerSnapshotDone.clear();
         stagedEditDone.clear();
         tabNameSet = false;
@@ -1451,9 +1544,9 @@ public class ClaudeChatPanel implements Disposable {
             if (filePath == null) {
                 filePath = com.anthropic.claude.intellij.util.JsonParser.getString(inputMap, "path");
             }
-            if (filePath != null) {
+            if (filePath != null && getProjectService() != null) {
                 com.anthropic.claude.intellij.diff.CheckpointManager checkpointMgr =
-                    com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project).getCheckpointManager();
+                    getProjectService().getCheckpointManager();
                 checkpointMgr.snapshot(filePath);
             }
         } catch (Exception e) {
@@ -1481,9 +1574,9 @@ public class ClaudeChatPanel implements Disposable {
         if (input == null) return;
         try {
             String filePath = extractFilePathFromPartialJson(input);
-            if (filePath != null) {
+            if (filePath != null && getProjectService() != null) {
                 com.anthropic.claude.intellij.diff.CheckpointManager checkpointMgr =
-                    com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project).getCheckpointManager();
+                    getProjectService().getCheckpointManager();
                 checkpointMgr.snapshot(filePath);
             }
         } catch (Exception e) {
@@ -1540,9 +1633,8 @@ public class ClaudeChatPanel implements Disposable {
             if (filePath == null) {
                 filePath = com.anthropic.claude.intellij.util.JsonParser.getString(inputMap, "path");
             }
-            if (filePath != null) {
-                com.anthropic.claude.intellij.service.ClaudeProjectService service =
-                    com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
+            if (filePath != null && getProjectService() != null) {
+                com.anthropic.claude.intellij.service.ClaudeProjectService service = getProjectService();
                 com.anthropic.claude.intellij.diff.EditDecisionManager edm = service.getEditDecisionManager();
                 com.anthropic.claude.intellij.diff.CheckpointManager checkpointMgr = service.getCheckpointManager();
 
@@ -1605,6 +1697,7 @@ public class ClaudeChatPanel implements Disposable {
 
     /**
      * Opens a new parallel conversation tab in the Claude tool window.
+     * Each tab has its own CLI process and ConversationModel — fully independent.
      */
     private void handleNewTab() {
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
@@ -1612,20 +1705,16 @@ public class ClaudeChatPanel implements Disposable {
                 com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
             if (toolWindow == null) return;
 
-            // Stop current CLI so the new tab can start a fresh session.
-            // Do NOT clear conversationModel — the current tab keeps its messages in the webview DOM.
-            if (cliManager.isRunning()) {
-                cliManager.stop();
-            }
-            cancelStreamingTimeout();
-
-            // Create new tab — its ClaudeChatPanel constructor will start a fresh CLI
+            // Do NOT stop current tab's CLI — it keeps running independently.
+            // The new tab creates its own CLI process and ConversationModel.
             ClaudeChatPanel newPanel = new ClaudeChatPanel(project);
             int tabCount = toolWindow.getContentManager().getContentCount();
             com.intellij.ui.content.Content content =
                 com.intellij.ui.content.ContentFactory.getInstance()
                     .createContent(newPanel.getComponent(), "Chat " + (tabCount + 1), false);
             content.setCloseable(true);
+            // Dispose panel when tab is closed
+            content.setDisposer(newPanel);
             toolWindow.getContentManager().addContent(content);
             toolWindow.getContentManager().setSelectedContent(content);
         });
@@ -1677,6 +1766,11 @@ public class ClaudeChatPanel implements Disposable {
                 builder.permissionMode(settings.initialPermissionMode);
             }
 
+            // Apply effort level
+            if (currentEffort != null && !currentEffort.isEmpty()) {
+                builder.effort(currentEffort);
+            }
+
             CliProcessConfig config = builder.build();
             cliManager.start(config);
         } catch (IOException e) {
@@ -1708,6 +1802,18 @@ public class ClaudeChatPanel implements Disposable {
         if (info != null) {
             sendToWebview("session_initialized", buildSessionInfoJson(info));
         }
+
+        // Send current permission mode
+        String currentMode = ClaudeSettings.getInstance().getState().initialPermissionMode;
+        if (currentMode == null || currentMode.isEmpty() || "default".equals(currentMode)) {
+            currentMode = "default";
+        }
+        sendToWebview("mode_changed", "{\"mode\":" + jsonString(currentMode) + "}");
+
+        // Send current effort level
+        String effortLevel = ClaudeSettings.getInstance().getState().effortLevel;
+        if (effortLevel == null) effortLevel = "medium";
+        sendToWebview("effort_changed", "{\"effort\":" + jsonString(effortLevel) + "}");
 
         // Replay existing messages
         for (MessageBlock block : conversationModel.getMessages()) {
@@ -1758,6 +1864,14 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     /**
+     * Returns the project service, or null if not yet available.
+     * Null-safe helper to avoid NPE during early tool-window initialization.
+     */
+    private com.anthropic.claude.intellij.service.ClaudeProjectService getProjectService() {
+        return com.anthropic.claude.intellij.service.ClaudeProjectService.getInstance(project);
+    }
+
+    /**
      * Extracts webview resources (HTML, CSS, JS) from the plugin JAR to a temp directory
      * so that JCEF can load them with proper relative path resolution.
      */
@@ -1805,7 +1919,7 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     private void cleanup() {
-        // Remove listeners to prevent memory leaks and duplicate messages
+        // Remove listeners to prevent memory leaks
         if (conversationModel != null && conversationListener != null) {
             conversationModel.removeListener(conversationListener);
         }
@@ -1816,6 +1930,7 @@ public class ClaudeChatPanel implements Disposable {
             cliManager.removeMessageListener(conversationModel);
         }
         cancelStreamingTimeout();
+        // Stop this tab's own CLI process (each tab owns its CLI)
         if (cliManager != null && cliManager.isRunning()) {
             cliManager.stop();
         }

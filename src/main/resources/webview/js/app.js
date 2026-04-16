@@ -38,6 +38,9 @@
     var historyBtn = document.getElementById('history-btn');
     var headerStopBtn = document.getElementById('header-stop-btn');
     var newTabBtn = document.getElementById('new-tab-btn');
+    var modeBadge = document.getElementById('session-mode');
+    var modePopup = document.getElementById('mode-popup');
+    var modeLabel = document.getElementById('mode-label');
 
     // ==================== State ====================
 
@@ -101,7 +104,8 @@
         loadingEl: null,
         attachedImages: [],  // Array of { dataUrl, bytes (base64) }
         ctrlEnterToSend: false,  // When true: Ctrl+Enter sends, Enter inserts newline
-        messageIndex: 0  // Counter for message indices (used by fork)
+        messageIndex: 0,  // Counter for message indices (used by fork)
+        currentMode: 'default'  // Permission mode: 'default', 'acceptEdits', 'plan'
     };
 
     // ==================== Initialization ====================
@@ -164,6 +168,12 @@
                         return;
                     }
                 }
+            }
+            // Shift+Tab: cycle permission mode
+            if (e.key === 'Tab' && e.shiftKey) {
+                e.preventDefault();
+                cycleMode();
+                return;
             }
             // Escape: cancel streaming if active, otherwise clear input
             if (e.key === 'Escape') {
@@ -292,7 +302,43 @@
             if (settingsDropdown && !settingsDropdown.classList.contains('hidden')) {
                 settingsDropdown.classList.add('hidden');
             }
+            if (modePopup && !modePopup.classList.contains('hidden')) {
+                modePopup.classList.add('hidden');
+            }
         });
+
+        // Mode selector badge click — toggle popup
+        if (modeBadge) {
+            modeBadge.addEventListener('click', function (e) {
+                e.stopPropagation();
+                modePopup.classList.toggle('hidden');
+                // Close settings dropdown if open
+                settingsDropdown.classList.add('hidden');
+            });
+        }
+
+        // Mode option click + effort dot click
+        if (modePopup) {
+            modePopup.addEventListener('click', function (e) {
+                e.stopPropagation();
+                // Mode option
+                var option = e.target.closest('.mode-option');
+                if (option) {
+                    var mode = option.getAttribute('data-mode');
+                    setMode(mode);
+                    bridge.sendToJava('change_mode', { mode: mode });
+                    modePopup.classList.add('hidden');
+                    return;
+                }
+                // Effort dot
+                var dot = e.target.closest('.effort-dot');
+                if (dot) {
+                    var effort = dot.getAttribute('data-effort');
+                    setEffort(effort);
+                    bridge.sendToJava('change_effort', { effort: effort });
+                }
+            });
+        }
 
         // Reconnect button
         reconnectBtn.addEventListener('click', function () {
@@ -390,6 +436,12 @@
             if (data && data.message) showToast(data.message);
         });
         bridge.on('selection_indicator', handleSelectionIndicator);
+        bridge.on('mode_changed', function(data) {
+            if (data && data.mode) setMode(data.mode);
+        });
+        bridge.on('effort_changed', function(data) {
+            if (data) setEffort(data.effort || 'medium');
+        });
         bridge.on('edit_staged', handleEditStaged);
         bridge.on('attachments_updated', handleAttachmentsUpdated);
         bridge.on('attachments_cleared', handleAttachmentsCleared);
@@ -885,6 +937,53 @@
     }
 
     // ==================== UI Helpers ====================
+
+    var MODE_LABELS = { 'default': 'Ask before edits', 'acceptEdits': 'Edit automatically', 'plan': 'Plan mode' };
+    var MODE_ORDER = ['default', 'acceptEdits', 'plan'];
+
+    function setMode(mode) {
+        state.currentMode = mode;
+        // Update toolbar label
+        if (modeLabel) {
+            modeLabel.textContent = MODE_LABELS[mode] || mode;
+        }
+        // Update checkmarks in popup
+        if (modePopup) {
+            var options = modePopup.querySelectorAll('.mode-option');
+            for (var i = 0; i < options.length; i++) {
+                var opt = options[i];
+                var check = opt.querySelector('.mode-check');
+                var isSelected = opt.getAttribute('data-mode') === mode;
+                if (check) {
+                    check.classList.toggle('hidden', !isSelected);
+                }
+                opt.classList.toggle('selected', isSelected);
+            }
+        }
+    }
+
+    var EFFORT_LABELS = { '': 'Auto', 'low': 'Low', 'medium': 'Medium', 'high': 'High', 'max': 'Max' };
+
+    function setEffort(effort) {
+        // Update dots
+        var dots = document.querySelectorAll('#effort-dots .effort-dot');
+        for (var i = 0; i < dots.length; i++) {
+            dots[i].classList.toggle('active', dots[i].getAttribute('data-effort') === effort);
+        }
+        // Update label
+        var levelText = document.getElementById('effort-level-text');
+        if (levelText) {
+            levelText.textContent = EFFORT_LABELS[effort] || 'Medium';
+        }
+    }
+
+    function cycleMode() {
+        var idx = MODE_ORDER.indexOf(state.currentMode);
+        var nextIdx = (idx + 1) % MODE_ORDER.length;
+        var nextMode = MODE_ORDER[nextIdx];
+        setMode(nextMode);
+        bridge.sendToJava('change_mode', { mode: nextMode });
+    }
 
     function setStreamingState(streaming) {
         state.isStreaming = streaming;

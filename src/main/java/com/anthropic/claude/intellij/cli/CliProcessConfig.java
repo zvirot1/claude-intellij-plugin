@@ -17,6 +17,7 @@ public class CliProcessConfig {
     private final String appendSystemPrompt;
     private final int maxTurns;
     private final String[] additionalDirs;
+    private final String effort;
 
     private CliProcessConfig(Builder builder) {
         this.cliPath = builder.cliPath;
@@ -30,6 +31,7 @@ public class CliProcessConfig {
         this.appendSystemPrompt = builder.appendSystemPrompt;
         this.maxTurns = builder.maxTurns;
         this.additionalDirs = builder.additionalDirs;
+        this.effort = builder.effort;
     }
 
     public String getCliPath() { return cliPath; }
@@ -43,6 +45,7 @@ public class CliProcessConfig {
     public String getAppendSystemPrompt() { return appendSystemPrompt; }
     public int getMaxTurns() { return maxTurns; }
     public String[] getAdditionalDirs() { return additionalDirs; }
+    public String getEffort() { return effort; }
 
     /**
      * Creates a new config identical to this one but with the given resumeSessionId.
@@ -57,6 +60,7 @@ public class CliProcessConfig {
         if (appendSystemPrompt != null) b.appendSystemPrompt(appendSystemPrompt);
         if (allowedTools != null) b.allowedTools(allowedTools);
         if (additionalDirs != null) b.additionalDirs(additionalDirs);
+        if (effort != null) b.effort(effort);
         return b.build();
     }
 
@@ -72,6 +76,7 @@ public class CliProcessConfig {
         private String appendSystemPrompt;
         private int maxTurns;
         private String[] additionalDirs;
+        private String effort;
 
         public Builder(String cliPath, String workingDirectory) {
             this.cliPath = cliPath;
@@ -120,6 +125,11 @@ public class CliProcessConfig {
 
         public Builder additionalDirs(String... additionalDirs) {
             this.additionalDirs = additionalDirs;
+            return this;
+        }
+
+        public Builder effort(String effort) {
+            this.effort = effort;
             return this;
         }
 

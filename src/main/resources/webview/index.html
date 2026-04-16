@@ -153,6 +153,58 @@
                     </svg>
                 </button>
             </div>
+            <!-- Input toolbar: + | effort dots | mode + send -->
+            <div id="input-toolbar">
+                <div id="input-toolbar-left">
+                </div>
+                <div id="input-toolbar-right">
+                    <div id="mode-selector-wrapper">
+                        <button id="session-mode" class="toolbar-btn mode-btn" title="Click to switch mode (Shift+Tab)">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M5 6h6M5 8h6M5 10h4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
+                            <span id="mode-label">Plan mode</span>
+                        </button>
+                        <div id="mode-popup" class="mode-popup hidden">
+                            <div class="mode-popup-header">Modes <span class="mode-shortcut">&#8679;+tab to switch</span></div>
+                            <div class="mode-option" data-mode="default">
+                                <span class="mode-icon">&#9995;</span>
+                                <div class="mode-info">
+                                    <div class="mode-title">Ask before edits</div>
+                                    <div class="mode-desc">Claude will ask for approval before making each edit</div>
+                                </div>
+                                <span class="mode-check hidden">&#10003;</span>
+                            </div>
+                            <div class="mode-option" data-mode="acceptEdits">
+                                <span class="mode-icon">&lt;/&gt;</span>
+                                <div class="mode-info">
+                                    <div class="mode-title">Edit automatically</div>
+                                    <div class="mode-desc">Claude will edit your selected text or the whole file</div>
+                                </div>
+                                <span class="mode-check hidden">&#10003;</span>
+                            </div>
+                            <div class="mode-option" data-mode="plan">
+                                <span class="mode-icon">&#128203;</span>
+                                <div class="mode-info">
+                                    <div class="mode-title">Plan mode</div>
+                                    <div class="mode-desc">Claude will explore the code and present a plan before editing</div>
+                                </div>
+                                <span class="mode-check hidden">&#10003;</span>
+                            </div>
+                            <div class="mode-popup-sep"></div>
+                            <div class="effort-row">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12V8M5.3 12V6M8.7 12V4M12 12V2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                                <span id="effort-label">Effort (<span id="effort-level-text">Medium</span>)</span>
+                                <div id="effort-dots" class="effort-dots">
+                                    <span class="effort-dot" data-effort="" title="Auto"></span>
+                                    <span class="effort-dot" data-effort="low" title="Low"></span>
+                                    <span class="effort-dot active" data-effort="medium" title="Medium"></span>
+                                    <span class="effort-dot" data-effort="high" title="High"></span>
+                                    <span class="effort-dot" data-effort="max" title="Max"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -222,6 +222,202 @@ html, body {
     margin: 4px 0;
 }
 
+/* ==================== Input Toolbar (below input) ==================== */
+
+#input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+#input-toolbar-left,
+#input-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.toolbar-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.toolbar-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.toolbar-btn svg {
+    flex-shrink: 0;
+}
+
+/* Mode button in toolbar */
+.mode-btn {
+    color: var(--text-secondary);
+}
+
+/* Effort row inside mode popup */
+.mode-popup-sep {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 4px 0;
+}
+
+.effort-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-small);
+}
+
+.effort-row svg {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+
+#effort-label {
+    white-space: nowrap;
+}
+
+.effort-dots {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+}
+
+.effort-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    cursor: pointer;
+    transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.effort-dot:hover {
+    background: var(--text-secondary);
+    transform: scale(1.3);
+}
+
+.effort-dot.active {
+    width: 10px;
+    height: 10px;
+    background: var(--text-primary);
+}
+
+/* ==================== Mode Selector Popup ==================== */
+
+#mode-selector-wrapper {
+    position: relative;
+}
+
+.mode-popup {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    min-width: 320px;
+    z-index: 300;
+    overflow: hidden;
+    animation: slideUp 150ms ease;
+}
+
+.mode-popup.hidden {
+    display: none;
+}
+
+.mode-popup-header {
+    padding: 10px 14px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 500;
+}
+
+.mode-shortcut {
+    opacity: 0.5;
+    font-size: 0.85em;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    gap: 10px;
+}
+
+.mode-option:hover {
+    background: var(--bg-hover);
+}
+
+.mode-option.selected {
+    background: var(--claude-orange-light);
+}
+
+.mode-icon {
+    font-size: 16px;
+    width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.mode-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.mode-title {
+    font-size: var(--font-size-small);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.mode-desc {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-top: 2px;
+    line-height: 1.3;
+}
+
+.mode-check {
+    color: var(--claude-orange);
+    font-size: 14px;
+    font-weight: bold;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.mode-check.hidden {
+    visibility: hidden;
+}
+
 .menu-shortcut {
     float: right;
     opacity: 0.5;
