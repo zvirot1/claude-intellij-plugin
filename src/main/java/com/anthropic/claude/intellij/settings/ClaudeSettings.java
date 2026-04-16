@@ -33,6 +33,9 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
         /** Effort level: "" (auto), "low", "medium", "high", "max". */
         public String effortLevel = "medium";
 
+        /** Comma-separated list of session IDs for open tabs (restored on startup). */
+        public String openTabSessionIds = "";
+
         /** Whether to auto-save files after Claude edits them. */
         public boolean autosave = true;
 

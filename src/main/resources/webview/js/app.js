@@ -38,6 +38,7 @@
     var historyBtn = document.getElementById('history-btn');
     var headerStopBtn = document.getElementById('header-stop-btn');
     var newTabBtn = document.getElementById('new-tab-btn');
+    var closeTabBtn = document.getElementById('close-tab-btn');
     var modeBadge = document.getElementById('session-mode');
     var modePopup = document.getElementById('mode-popup');
     var modeLabel = document.getElementById('mode-label');
@@ -370,6 +371,13 @@
         if (newTabBtn) {
             newTabBtn.addEventListener('click', function () {
                 bridge.sendToJava('new_tab', {});
+            });
+        }
+
+        // Close Tab — closes this conversation tab
+        if (closeTabBtn) {
+            closeTabBtn.addEventListener('click', function () {
+                bridge.sendToJava('close_tab', {});
             });
         }
     }

@@ -159,7 +159,8 @@ public class ClaudeChatPanel implements Disposable {
                 if (info != null && info.getSessionId() != null) {
                     sessionManager.startNewSession(info.getWorkingDirectory());
 
-                    // History is already loaded from disk in loadLastSessionHistoryFromDisk()
+                    // Store session ID on Content for tab persistence
+                    updateContentSessionId(info.getSessionId());
                 }
             }
 
@@ -309,6 +310,10 @@ public class ClaudeChatPanel implements Disposable {
     private volatile boolean resumeHistoryPending = false;
     /** Guards against loading history twice (pushInitialState called from onLoadEnd + webview_ready). */
     private boolean historyLoadedFromDisk = false;
+    /** If set, this panel resumes a specific session instead of the most recent one. */
+    private String resumeSessionId = null;
+    /** Set after close/clear to prevent session ID from being re-saved. */
+    private boolean sessionCleared = false;
 
     private void initSessionManager() {
         sessionManager = new com.anthropic.claude.intellij.session.ClaudeSessionManager();
@@ -390,6 +395,9 @@ public class ClaudeChatPanel implements Disposable {
                 break;
             case "clear_conversation":
                 conversationModel.clear();
+                break;
+            case "close_tab":
+                handleCloseTab();
                 break;
             case "always_allow_permission":
                 handleAlwaysAllowPermission(payload);
@@ -1766,6 +1774,53 @@ public class ClaudeChatPanel implements Disposable {
         });
     }
 
+    /**
+     * Closes the current tab. If it's the last tab, clears the conversation instead.
+     */
+    private void handleCloseTab() {
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+            com.intellij.openapi.wm.ToolWindow toolWindow =
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
+            if (toolWindow == null) return;
+
+            com.intellij.ui.content.ContentManager cm = toolWindow.getContentManager();
+            if (cm.getContentCount() <= 1) {
+                // Last tab — clear conversation and reset session
+                if (cliManager.isRunning()) {
+                    cliManager.stop();
+                }
+                conversationModel.clear();
+                sendToWebview("conversation_cleared", "{}");
+                tabNameSet = false;
+                shouldResumeLastSession = false;
+                resumeSessionId = null;
+                sessionCleared = true;
+                // Clear saved session ID so it doesn't restore on next launch
+                for (com.intellij.ui.content.Content c : cm.getContents()) {
+                    if (c.getComponent() == rootPanel) {
+                        c.putUserData(ClaudeToolWindowFactory.SESSION_ID_KEY, null);
+                        break;
+                    }
+                }
+                ClaudeToolWindowFactory.saveOpenTabIds(toolWindow);
+                // Also directly clear settings to ensure it's persisted
+                ClaudeSettings settingsInstance = ClaudeSettings.getInstance();
+                if (settingsInstance != null) {
+                    settingsInstance.getState().openTabSessionIds = "";
+                }
+                return;
+            }
+
+            // Find and remove the content that contains this panel's component
+            for (com.intellij.ui.content.Content c : cm.getContents()) {
+                if (c.getComponent() == rootPanel) {
+                    cm.removeContent(c, true);
+                    break;
+                }
+            }
+        });
+    }
+
     private void handlePermissionResponse(String payload, boolean allow) {
         try {
             java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
@@ -1817,10 +1872,14 @@ public class ClaudeChatPanel implements Disposable {
                 builder.permissionMode(settings.initialPermissionMode);
             }
 
-            // Auto-resume last session on first launch (like Eclipse --continue)
+            // Auto-resume last session on first launch
             if (shouldResumeLastSession) {
                 shouldResumeLastSession = false;
-                builder.continueSession(true);
+                if (resumeSessionId != null && !resumeSessionId.isEmpty()) {
+                    builder.resumeSessionId(resumeSessionId);
+                } else {
+                    builder.continueSession(true);
+                }
                 resumeHistoryPending = true;
             }
 
@@ -1908,12 +1967,23 @@ public class ClaudeChatPanel implements Disposable {
      */
     private void loadLastSessionHistoryFromDisk() {
         try {
-            // Find the most recent session from our session store
-            java.util.List<SessionInfo> sessions = sessionManager.listSessions();
-            if (sessions.isEmpty()) return;
+            String sessionId;
+            SessionInfo lastSession;
 
-            SessionInfo lastSession = sessions.get(0); // sorted by lastActiveTime descending
-            String sessionId = lastSession.getSessionId();
+            if (resumeSessionId != null && !resumeSessionId.isEmpty()) {
+                // Resume a specific session
+                sessionId = resumeSessionId;
+                lastSession = sessionManager.resumeSession(sessionId);
+                if (lastSession == null) {
+                    lastSession = new SessionInfo(sessionId);
+                }
+            } else {
+                // Find the most recent session from our session store
+                java.util.List<SessionInfo> sessions = sessionManager.listSessions();
+                if (sessions.isEmpty()) return;
+                lastSession = sessions.get(0);
+                sessionId = lastSession.getSessionId();
+            }
             if (sessionId == null || sessionId.isEmpty()) return;
 
             java.util.List<MessageBlock> history = loadSessionHistoryFromJsonl(sessionId);
@@ -1943,8 +2013,9 @@ public class ClaudeChatPanel implements Disposable {
                 }
             }
 
-            // Show session info
+            // Show session info and store session ID for tab persistence
             sendToWebview("session_initialized", buildSessionInfoJson(lastSession));
+            updateContentSessionId(sessionId);
         } catch (Exception e) {
             LOG.warn("Failed to load last session history from disk", e);
         }
@@ -1974,6 +2045,35 @@ public class ClaudeChatPanel implements Disposable {
 
     public ClaudeCliManager getCliManager() {
         return cliManager;
+    }
+
+    /**
+     * Sets a specific session ID to resume (instead of the most recent).
+     * Must be called before the webview loads.
+     */
+    public void setResumeSessionId(String sessionId) {
+        this.resumeSessionId = sessionId;
+    }
+
+    /**
+     * Stores the session ID on the Content object that holds this panel,
+     * so ClaudeToolWindowFactory can persist open tab IDs.
+     */
+    private void updateContentSessionId(String sessionId) {
+        if (sessionCleared) return; // Don't re-save after clear
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+            com.intellij.openapi.wm.ToolWindow tw =
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
+            if (tw == null) return;
+            for (com.intellij.ui.content.Content c : tw.getContentManager().getContents()) {
+                if (c.getComponent() == rootPanel) {
+                    c.putUserData(ClaudeToolWindowFactory.SESSION_ID_KEY, sessionId);
+                    break;
+                }
+            }
+            // Persist the updated tab list to settings
+            ClaudeToolWindowFactory.saveOpenTabIds(tw);
+        });
     }
 
     /**
