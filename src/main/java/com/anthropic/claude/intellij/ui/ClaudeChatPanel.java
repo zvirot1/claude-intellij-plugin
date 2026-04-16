@@ -1444,7 +1444,8 @@ public class ClaudeChatPanel implements Disposable {
 
     /**
      * Handles effort level change from webview.
-     * Stores the effort level — it will be applied on the next CLI start/restart.
+     * Restarts CLI with --resume to apply the new --effort flag immediately
+     * (like VS Code, where each query spawns a new CLI process).
      */
     private void handleChangeEffort(String payload) {
         try {
@@ -1455,8 +1456,43 @@ public class ClaudeChatPanel implements Disposable {
             // Persist to settings so new tabs pick it up
             ClaudeSettings.getInstance().getState().effortLevel = (currentEffort != null) ? currentEffort : "";
             LOG.info("Effort level changed to: " + (currentEffort != null ? currentEffort : "auto"));
+
+            // Restart CLI with --resume to apply new effort immediately
+            if (cliManager.isRunning()) {
+                String sessionId = null;
+                SessionInfo info = conversationModel.getSessionInfo();
+                if (info != null && info.getSessionId() != null && !info.getSessionId().isEmpty()) {
+                    sessionId = info.getSessionId();
+                }
+
+                cliManager.stop();
+
+                String projectPath = project.getBasePath();
+                if (projectPath == null) projectPath = System.getProperty("user.home");
+                String cliPath = ClaudeCliManager.getCliPath();
+                if (cliPath != null) {
+                    ClaudeSettings.State settings = ClaudeSettings.getInstance().getState();
+                    CliProcessConfig.Builder builder = new CliProcessConfig.Builder(cliPath, projectPath);
+
+                    if (settings.selectedModel != null && !settings.selectedModel.isEmpty()
+                            && !"default".equals(settings.selectedModel)) {
+                        builder.model(settings.selectedModel);
+                    }
+                    if (settings.initialPermissionMode != null && !settings.initialPermissionMode.isEmpty()
+                            && !"default".equals(settings.initialPermissionMode)) {
+                        builder.permissionMode(settings.initialPermissionMode);
+                    }
+                    if (currentEffort != null && !currentEffort.isEmpty()) {
+                        builder.effort(currentEffort);
+                    }
+                    if (sessionId != null && !sessionId.isEmpty()) {
+                        builder.resumeSessionId(sessionId);
+                    }
+                    cliManager.start(builder.build());
+                }
+            }
         } catch (Exception e) {
-            LOG.warn("Failed to parse effort change", e);
+            LOG.error("Failed to change effort", e);
         }
     }
 
