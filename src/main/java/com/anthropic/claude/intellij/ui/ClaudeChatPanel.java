@@ -399,6 +399,9 @@ public class ClaudeChatPanel implements Disposable {
             case "close_tab":
                 handleCloseTab();
                 break;
+            case "rename_tab":
+                handleRenameTab(payload);
+                break;
             case "always_allow_permission":
                 handleAlwaysAllowPermission(payload);
                 break;
@@ -577,6 +580,14 @@ public class ClaudeChatPanel implements Disposable {
 
             // Add the user message to the conversation model
             conversationModel.addUserMessage(message);
+
+            // Persist session state immediately after user sends, so auto-resume
+            // works even if Claude never finishes responding (crash, network fail).
+            try {
+                if (sessionManager != null) {
+                    sessionManager.saveCurrentSession(conversationModel);
+                }
+            } catch (Exception ignored) {}
 
             // Set tab name from first user message (like Eclipse)
             if (!tabNameSet) {
@@ -1009,6 +1020,9 @@ public class ClaudeChatPanel implements Disposable {
                         case "preferences":
                             com.intellij.openapi.options.ShowSettingsUtil.getInstance()
                                 .showSettingsDialog(project, "Claude Code");
+                            break;
+                        case "rename-tab":
+                            renameTab();
                             break;
                         default:
                             LOG.warn("Unknown dialog type: " + dialog);
@@ -1733,6 +1747,9 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     private void updateTabDisplayName(String title) {
+        // Update webview header title
+        sendToWebview("tab_renamed", "{\"name\":" + jsonString(title) + "}");
+        // Update IntelliJ tab name
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
             com.intellij.openapi.wm.ToolWindow toolWindow =
                 com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
@@ -1746,6 +1763,52 @@ public class ClaudeChatPanel implements Disposable {
                 }
             }
         });
+    }
+
+    /**
+     * Show an input dialog to rename the current tab.
+     * Matches Eclipse plugin's "Rename Tab..." menu action.
+     */
+    private void renameTab() {
+        String currentName = "Chat";
+        // Find current display name from our content
+        com.intellij.openapi.wm.ToolWindow tw =
+            com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Claude");
+        if (tw != null) {
+            for (com.intellij.ui.content.Content c : tw.getContentManager().getContents()) {
+                if (c.getComponent() == rootPanel) {
+                    currentName = c.getDisplayName();
+                    break;
+                }
+            }
+        }
+
+        String newName = com.intellij.openapi.ui.Messages.showInputDialog(
+            project,
+            "Enter a new name for this conversation tab:",
+            "Rename Tab",
+            com.intellij.openapi.ui.Messages.getQuestionIcon(),
+            currentName,
+            null);
+
+        if (newName != null) {
+            newName = newName.trim();
+            if (!newName.isEmpty()) {
+                updateTabDisplayName(newName);
+                tabNameSet = true;
+                // Persist the custom name as the session summary
+                if (sessionManager != null) {
+                    SessionInfo current = sessionManager.getCurrentSession();
+                    if (current != null) {
+                        current.setSummary(newName);
+                        // Save via SessionStore (accessed via manager's saveCurrentSession)
+                        if (conversationModel != null) {
+                            sessionManager.saveCurrentSession(conversationModel);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1777,6 +1840,24 @@ public class ClaudeChatPanel implements Disposable {
     /**
      * Closes the current tab. If it's the last tab, clears the conversation instead.
      */
+    private void handleRenameTab(String payload) {
+        try {
+            java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
+            String newName = com.anthropic.claude.intellij.util.JsonParser.getString(data, "name");
+            if (newName == null || newName.isEmpty()) return;
+            tabNameSet = true;
+            updateTabDisplayName(newName);
+            // Update session summary for persistence
+            SessionInfo info = conversationModel.getSessionInfo();
+            if (info != null) {
+                info.setSummary(newName);
+                sessionManager.saveCurrentSession(conversationModel);
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to rename tab", e);
+        }
+    }
+
     private void handleCloseTab() {
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
             com.intellij.openapi.wm.ToolWindow toolWindow =
@@ -1970,19 +2051,18 @@ public class ClaudeChatPanel implements Disposable {
             String sessionId;
             SessionInfo lastSession;
 
-            if (resumeSessionId != null && !resumeSessionId.isEmpty()) {
-                // Resume a specific session
-                sessionId = resumeSessionId;
-                lastSession = sessionManager.resumeSession(sessionId);
-                if (lastSession == null) {
-                    lastSession = new SessionInfo(sessionId);
-                }
-            } else {
-                // Find the most recent session from our session store
-                java.util.List<SessionInfo> sessions = sessionManager.listSessions();
-                if (sessions.isEmpty()) return;
-                lastSession = sessions.get(0);
-                sessionId = lastSession.getSessionId();
+            // VS Code parity: only auto-resume a session if this panel was explicitly
+            // created to resume one (resumeSessionId set from openTabSessionIds).
+            // Fresh panels (New Tab, first launch without saved state) start empty —
+            // matches VS Code's deserializeWebviewPanel which always passes undefined
+            // for the session ID argument. No time-based freshness heuristic.
+            if (resumeSessionId == null || resumeSessionId.isEmpty()) {
+                return;
+            }
+            sessionId = resumeSessionId;
+            lastSession = sessionManager.resumeSession(sessionId);
+            if (lastSession == null) {
+                lastSession = new SessionInfo(sessionId);
             }
             if (sessionId == null || sessionId.isEmpty()) return;
 
@@ -2053,6 +2133,15 @@ public class ClaudeChatPanel implements Disposable {
      */
     public void setResumeSessionId(String sessionId) {
         this.resumeSessionId = sessionId;
+    }
+
+    /**
+     * Called by the tool window factory when restoring a tab with a custom
+     * (renamed) title — prevents {@link #loadLastSessionHistoryFromDisk()}
+     * from overwriting it with the first user message.
+     */
+    public void markTabNameAsCustom() {
+        this.tabNameSet = true;
     }
 
     /**

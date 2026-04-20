@@ -35,16 +35,21 @@ public class ClaudeToolWindowFactory implements ToolWindowFactory, com.intellij.
 
                 // Try to get tab name from saved session summary
                 String tabName = "Chat " + (i + 1);
+                boolean hasCustomName = false;
                 try {
                     com.anthropic.claude.intellij.model.SessionInfo info = sm.resumeSession(sid);
                     if (info != null && info.getSummary() != null && !info.getSummary().isEmpty()) {
                         tabName = info.getSummary();
                         if (tabName.length() > 30) tabName = tabName.substring(0, 30) + "\u2026";
+                        hasCustomName = true;
                     }
                 } catch (Exception ignored) {}
 
                 ClaudeChatPanel chatPanel = new ClaudeChatPanel(project);
                 chatPanel.setResumeSessionId(sid);
+                if (hasCustomName) {
+                    chatPanel.markTabNameAsCustom();
+                }
                 Content content = ContentFactory.getInstance()
                     .createContent(chatPanel.getComponent(), tabName, true);
                 content.setCloseable(true);

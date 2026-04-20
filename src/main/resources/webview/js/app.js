@@ -39,6 +39,7 @@
     var headerStopBtn = document.getElementById('header-stop-btn');
     var newTabBtn = document.getElementById('new-tab-btn');
     var closeTabBtn = document.getElementById('close-tab-btn');
+    var headerTitle = document.getElementById('header-title');
     var modeBadge = document.getElementById('session-mode');
     var modePopup = document.getElementById('mode-popup');
     var modeLabel = document.getElementById('mode-label');
@@ -374,6 +375,37 @@
             });
         }
 
+        // Double-click on header title to rename tab
+        if (headerTitle) {
+            headerTitle.style.cursor = 'pointer';
+            headerTitle.title = 'Double-click to rename';
+            headerTitle.addEventListener('dblclick', function (e) {
+                e.preventDefault();
+                var currentName = headerTitle.textContent;
+                var input = document.createElement('input');
+                input.type = 'text';
+                input.value = currentName;
+                input.className = 'rename-input';
+                input.style.cssText = 'font-size:inherit;font-weight:inherit;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--claude-orange);border-radius:4px;padding:1px 4px;outline:none;width:120px;';
+                headerTitle.textContent = '';
+                headerTitle.appendChild(input);
+                input.focus();
+                input.select();
+
+                function finishRename() {
+                    var newName = input.value.trim();
+                    if (!newName) newName = currentName;
+                    headerTitle.textContent = newName;
+                    bridge.sendToJava('rename_tab', { name: newName });
+                }
+                input.addEventListener('keydown', function (ev) {
+                    if (ev.key === 'Enter') { ev.preventDefault(); finishRename(); }
+                    if (ev.key === 'Escape') { ev.preventDefault(); headerTitle.textContent = currentName; }
+                });
+                input.addEventListener('blur', finishRename);
+            });
+        }
+
         // Close Tab — closes this conversation tab
         if (closeTabBtn) {
             closeTabBtn.addEventListener('click', function () {
@@ -449,6 +481,11 @@
         });
         bridge.on('effort_changed', function(data) {
             if (data) setEffort(data.effort || 'medium');
+        });
+        bridge.on('tab_renamed', function(data) {
+            if (data && data.name && headerTitle) {
+                headerTitle.textContent = data.name;
+            }
         });
         bridge.on('edit_staged', handleEditStaged);
         bridge.on('attachments_updated', handleAttachmentsUpdated);
