@@ -93,6 +93,51 @@ public abstract class CliMessage {
     }
 
     /**
+     * Non-init system notifications: hook_started, hook_progress, hook_response, compact_boundary.
+     * Carries hook execution details (name, stdout, stderr, exit code) so consumers can surface
+     * hook failures to the user.
+     */
+    public static class SystemNotification extends CliMessage {
+        private String subtype;
+        private String hookName;
+        private String stdout;
+        private String stderr;
+        private Integer exitCode;
+        private String rawJson;
+
+        public SystemNotification() { super("system"); }
+
+        public String getSubtype() { return subtype; }
+        public void setSubtype(String subtype) { this.subtype = subtype; }
+        public String getHookName() { return hookName; }
+        public void setHookName(String hookName) { this.hookName = hookName; }
+        public String getStdout() { return stdout; }
+        public void setStdout(String stdout) { this.stdout = stdout; }
+        public String getStderr() { return stderr; }
+        public void setStderr(String stderr) { this.stderr = stderr; }
+        public Integer getExitCode() { return exitCode; }
+        public void setExitCode(Integer exitCode) { this.exitCode = exitCode; }
+        public String getRawJson() { return rawJson; }
+        public void setRawJson(String rawJson) { this.rawJson = rawJson; }
+
+        /**
+         * Heuristic check whether this notification represents a hook error,
+         * looking at stdout/stderr for common error patterns or non-zero exit code.
+         */
+        public boolean hasErrorIndicator() {
+            String s = (stderr != null ? stderr : "") + " " + (stdout != null ? stdout : "");
+            String low = s.toLowerCase();
+            return low.contains("[error]")
+                || low.contains("error:")
+                || low.contains("token has expired")
+                || low.contains("authentication failed")
+                || low.contains("unauthorized")
+                || low.contains("permission denied")
+                || (exitCode != null && exitCode != 0);
+        }
+    }
+
+    /**
      * Complete assistant message with content blocks (text, tool_use, tool_result).
      * Includes stop reason and optional usage data.
      */

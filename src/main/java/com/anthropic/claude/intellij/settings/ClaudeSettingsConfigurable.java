@@ -34,6 +34,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
     private JBCheckBox showCostCheckbox;
     private JBCheckBox showStreamingCheckbox;
     private JBCheckBox autoSaveBeforeToolsCheckbox;
+    private JBCheckBox diagnosticLoggingCheckbox;
     private JSpinner maxTokensSpinner;
     private JTextField systemPromptField;
     private JSpinner sessionHistoryLimitSpinner;
@@ -95,6 +96,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         showCostCheckbox = new JBCheckBox("Show cost in status bar");
         showStreamingCheckbox = new JBCheckBox("Show streaming output in real time");
         autoSaveBeforeToolsCheckbox = new JBCheckBox("Auto-save dirty editors before tool execution");
+        diagnosticLoggingCheckbox = new JBCheckBox("Enable diagnostic logging (verbose [DIAG-*] entries — only for bug investigation)");
 
         // Max tokens spinner
         maxTokensSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 200000, 1000));
@@ -141,6 +143,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 .addComponent(showCostCheckbox)
                 .addComponent(showStreamingCheckbox)
                 .addComponent(autoSaveBeforeToolsCheckbox)
+                .addComponent(diagnosticLoggingCheckbox)
                 .addComponentFillVertically(new JPanel(), 0)
                 .getPanel();
 
@@ -203,6 +206,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 || showCostCheckbox.isSelected() != state.showCost
                 || showStreamingCheckbox.isSelected() != state.showStreaming
                 || autoSaveBeforeToolsCheckbox.isSelected() != state.autoSaveBeforeTools
+                || diagnosticLoggingCheckbox.isSelected() != state.diagnosticLogging
                 || ((Integer) maxTokensSpinner.getValue()) != state.maxTokens
                 || !systemPromptField.getText().trim().equals(state.systemPrompt)
                 || ((Integer) sessionHistoryLimitSpinner.getValue()) != state.sessionHistoryLimit
@@ -224,6 +228,10 @@ public class ClaudeSettingsConfigurable implements Configurable {
         state.showCost = showCostCheckbox.isSelected();
         state.showStreaming = showStreamingCheckbox.isSelected();
         state.autoSaveBeforeTools = autoSaveBeforeToolsCheckbox.isSelected();
+        state.diagnosticLogging = diagnosticLoggingCheckbox.isSelected();
+        // Apply DIAG flag immediately so toggling takes effect without restart
+        com.anthropic.claude.intellij.service.ClaudeApplicationService.DIAG_ENABLED =
+            state.diagnosticLogging || Boolean.getBoolean("claude.diag");
         state.maxTokens = (Integer) maxTokensSpinner.getValue();
         state.systemPrompt = systemPromptField.getText().trim();
         state.sessionHistoryLimit = (Integer) sessionHistoryLimitSpinner.getValue();
@@ -252,6 +260,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         showCostCheckbox.setSelected(state.showCost);
         showStreamingCheckbox.setSelected(state.showStreaming);
         autoSaveBeforeToolsCheckbox.setSelected(state.autoSaveBeforeTools);
+        diagnosticLoggingCheckbox.setSelected(state.diagnosticLogging);
         maxTokensSpinner.setValue(state.maxTokens);
         systemPromptField.setText(state.systemPrompt);
         sessionHistoryLimitSpinner.setValue(state.sessionHistoryLimit);
@@ -279,6 +288,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         showCostCheckbox = null;
         showStreamingCheckbox = null;
         autoSaveBeforeToolsCheckbox = null;
+        diagnosticLoggingCheckbox = null;
         maxTokensSpinner = null;
         systemPromptField = null;
         sessionHistoryLimitSpinner = null;

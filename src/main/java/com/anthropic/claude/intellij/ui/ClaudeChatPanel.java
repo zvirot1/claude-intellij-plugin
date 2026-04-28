@@ -275,6 +275,16 @@ public class ClaudeChatPanel implements Disposable {
             }
 
             @Override
+            public void onSilentEmptyShouldRetry(String prompt) {
+                LOG.info("[DIAG] Auto-retrying silent-empty turn: " + prompt);
+                // Re-send the prompt to the CLI without surfacing an error to the user.
+                // ConversationModel has already reset its per-turn state for the retry.
+                if (cliManager != null && cliManager.isRunning() && prompt != null) {
+                    cliManager.sendMessage(prompt);
+                }
+            }
+
+            @Override
             public void onConversationCleared() {
                 sendToWebview("conversation_cleared", "{}");
             }

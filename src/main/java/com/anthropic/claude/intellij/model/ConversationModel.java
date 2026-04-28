@@ -43,12 +43,24 @@ public class ConversationModel implements ICliMessageListener {
     private volatile boolean usingStreamEvents = false;
     private volatile String lastPermissionToolName;
 
+    // Silent-empty / hook block detection — see fixes 4–7 from FIXES-SUMMARY.md
+    /** True if any text was streamed during the current turn. Reset on new user input. */
+    private volatile boolean hadTextInCurrentTurn = false;
+    /** Most recent hook_response error (for correlating with empty results). */
+    private volatile CliMessage.SystemNotification lastErrorNotification;
+    /** Most recent user prompt — replayed for one auto-retry on silent empty. */
+    private volatile String lastUserPrompt;
+    /** True after we've already retried once for the current turn. Prevents infinite loops. */
+    private volatile boolean retriedSilentEmpty = false;
+
     // ==================== ICliMessageListener Implementation ====================
 
     @Override
     public void onMessage(CliMessage message) {
         if (message instanceof CliMessage.SystemInit) {
             handleSystemInit((CliMessage.SystemInit) message);
+        } else if (message instanceof CliMessage.SystemNotification) {
+            handleSystemNotification((CliMessage.SystemNotification) message);
         } else if (message instanceof CliMessage.AssistantMessage) {
             handleAssistantMessage((CliMessage.AssistantMessage) message);
         } else if (message instanceof CliMessage.UserMessage) {
@@ -61,6 +73,44 @@ public class ConversationModel implements ICliMessageListener {
             handlePermissionRequest((CliMessage.PermissionRequest) message);
         } else if (message instanceof CliMessage.ToolUseSummary) {
             handleToolUseSummary((CliMessage.ToolUseSummary) message);
+        }
+    }
+
+    /**
+     * Handle hook_response / hook_started / hook_progress / compact_boundary notifications.
+     * Surfaces hook errors to the user with remediation hints. Mirrors Eclipse plugin fix #4.
+     */
+    private void handleSystemNotification(CliMessage.SystemNotification n) {
+        com.anthropic.claude.intellij.service.ClaudeApplicationService.logDiag(
+            "[DIAG] SystemNotification subtype=" + n.getSubtype()
+                + " hook=" + n.getHookName()
+                + " hasError=" + n.hasErrorIndicator());
+
+        // Only react on hook_response (final outcome) — avoid spamming on progress events.
+        if (!"hook_response".equals(n.getSubtype())) {
+            return;
+        }
+
+        if (n.hasErrorIndicator()) {
+            // Cache so handleResult can correlate an empty result with this error.
+            lastErrorNotification = n;
+
+            String hook = n.getHookName() != null ? n.getHookName() : "hook";
+            String detail = n.getStderr();
+            if (detail == null || detail.isBlank()) detail = n.getStdout();
+            if (detail == null) detail = "";
+            detail = detail.trim();
+            if (detail.length() > 400) detail = detail.substring(0, 400) + " …";
+
+            String hint = "";
+            String low = detail.toLowerCase();
+            if (low.contains("token has expired") || low.contains("sso")) {
+                hint = "\nFix: refresh your AWS SSO token (run `aws sso login`) and reopen this Claude tab.";
+            } else if (low.contains("unauthorized") || low.contains("authentication failed")) {
+                hint = "\nFix: re-authenticate (check your API key / SSO session) and reopen this Claude tab.";
+            }
+
+            fireError("⚠ Hook '" + hook + "' reported an error:\n" + detail + hint);
         }
     }
 
@@ -125,6 +175,13 @@ public class ConversationModel implements ICliMessageListener {
         synchronized (messages) {
             messages.add(block);
         }
+
+        // Reset per-turn tracking — used by silent-empty detection (fixes 4–7).
+        hadTextInCurrentTurn = false;
+        lastErrorNotification = null;
+        lastUserPrompt = content;
+        retriedSilentEmpty = false;
+
         fireUserMessageAdded(block);
     }
 
@@ -252,7 +309,11 @@ public class ConversationModel implements ICliMessageListener {
             for (CliMessage.ContentBlock contentBlock : msg.getContent()) {
                 if ("text".equals(contentBlock.getType())) {
                     MessageBlock.TextSegment seg = new MessageBlock.TextSegment();
-                    seg.appendText(contentBlock.getText() != null ? contentBlock.getText() : "");
+                    String text = contentBlock.getText() != null ? contentBlock.getText() : "";
+                    seg.appendText(text);
+                    if (!text.isEmpty()) {
+                        hadTextInCurrentTurn = true;
+                    }
                     block.addSegment(seg);
                 } else if ("tool_use".equals(contentBlock.getType())) {
                     MessageBlock.ToolCallSegment seg = new MessageBlock.ToolCallSegment();
@@ -375,6 +436,7 @@ public class ConversationModel implements ICliMessageListener {
             // Append text to the current text segment
             MessageBlock.TextSegment textSeg = currentStreamingBlock.getOrCreateLastTextSegment();
             textSeg.appendText(delta.getText());
+            hadTextInCurrentTurn = true; // any text delta proves the model produced output
             fireStreamingTextAppended(currentStreamingBlock, delta.getText());
 
         } else if ("input_json_delta".equals(delta.getType())) {
@@ -451,6 +513,53 @@ public class ConversationModel implements ICliMessageListener {
         if (currentStreamingBlock != null) {
             fireAssistantMessageCompleted(currentStreamingBlock);
             currentStreamingBlock = null;
+        }
+
+        // Silent-empty / hook-block detection (fixes 5–7 from FIXES-SUMMARY.md):
+        // CLI returns success with zero text streamed and zero output tokens —
+        // typical signature of a UserPromptSubmit hook blocking the prompt.
+        String resultText = result.getResult();
+        boolean silentEmpty = !hadTextInCurrentTurn
+            && (resultText == null || resultText.isEmpty())
+            && result.getOutputTokens() == 0
+            && !result.isError();
+
+        if (silentEmpty) {
+            // First-attempt auto-retry — many UserPromptSubmit hooks are
+            // non-deterministic (random classifiers, rate spikes); a single
+            // retry frequently succeeds. Skip retry if we already have a
+            // hook error notification (deterministic block — retry won't help).
+            if (!retriedSilentEmpty
+                && lastUserPrompt != null && !lastUserPrompt.isEmpty()
+                && lastErrorNotification == null) {
+                retriedSilentEmpty = true;          // prevents infinite loop
+                hadTextInCurrentTurn = false;       // reset for the retry
+                com.anthropic.claude.intellij.service.ClaudeApplicationService
+                    .logDiag("[DIAG] silentEmpty result — auto-retrying once");
+                fireSilentEmptyShouldRetry(lastUserPrompt);
+                return;
+            }
+
+            // Retry exhausted (or already had a hook error) — surface a
+            // user-friendly explanation.
+            String retried = retriedSilentEmpty ? "after one auto-retry " : "";
+            String msg = "⚠ Your prompt was blocked " + retried + "by a hook.\n\n"
+                + "The CLI returned an empty response with 0 tokens used "
+                + "(duration=" + result.getDurationMs() + "ms, turns=" + result.getNumTurns() + "). "
+                + "This is the typical signature of a UserPromptSubmit hook "
+                + "(e.g. corporate \"obfuscation attack\" detector flagging "
+                + "Hebrew/RTL text). The hook can be non-deterministic — "
+                + (retriedSilentEmpty
+                    ? "we already retried automatically and it was blocked again, "
+                      + "so this prompt is consistently rejected."
+                    : "this attempt was rejected.")
+                + "\n\n"
+                + "To see the exact reason, run in a terminal:\n"
+                + "   claude --debug\n"
+                + "   <your prompt>\n\n"
+                + "Workarounds: rephrase in English, try again later, or ask your "
+                + "IT/admin to relax the hook rule.";
+            fireError(msg);
         }
 
         // Sweep ALL messages for orphaned RUNNING tool calls.
@@ -655,6 +764,12 @@ public class ConversationModel implements ICliMessageListener {
     private void fireError(String error) {
         for (IConversationListener l : listeners) {
             try { l.onError(error); } catch (Exception e) { logError(e); }
+        }
+    }
+
+    private void fireSilentEmptyShouldRetry(String prompt) {
+        for (IConversationListener l : listeners) {
+            try { l.onSilentEmptyShouldRetry(prompt); } catch (Exception e) { logError(e); }
         }
     }
 

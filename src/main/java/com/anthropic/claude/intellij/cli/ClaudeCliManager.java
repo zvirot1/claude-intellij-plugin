@@ -664,7 +664,9 @@ public class ClaudeCliManager {
                 new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
             String line;
             while (state.get() == ProcessState.RUNNING && (line = reader.readLine()) != null) {
-                LOG.warn("CLI stderr: " + line);
+                // Always log stderr at warn level, plus a tagged DIAG copy for filtering
+                LOG.warn("[Claude CLI stderr] " + line);
+                com.anthropic.claude.intellij.service.ClaudeApplicationService.logDiag("[DIAG-STDERR] " + line);
             }
         } catch (IOException e) {
             if (state.get() == ProcessState.RUNNING) {

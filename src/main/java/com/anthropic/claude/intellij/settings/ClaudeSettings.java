@@ -36,6 +36,9 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
         /** Comma-separated list of session IDs for open tabs (restored on startup). */
         public String openTabSessionIds = "";
 
+        /** When true, the plugin emits verbose [DIAG-*] log lines (only enable for bug investigation). */
+        public boolean diagnosticLogging = false;
+
         /** Whether to auto-save files after Claude edits them. */
         public boolean autosave = true;
 

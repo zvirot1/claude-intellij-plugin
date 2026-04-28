@@ -92,6 +92,14 @@ public interface IConversationListener {
     default void onError(String error) {}
 
     /**
+     * Called when a turn returned a silent-empty result (zero text, zero tokens) and the
+     * model wants the UI to automatically resend the same prompt as a one-shot retry.
+     * UIs that wire this up should re-call the CLI with {@code prompt} and avoid showing
+     * the user a transient error in between.
+     */
+    default void onSilentEmptyShouldRetry(String prompt) {}
+
+    /**
      * Called when the conversation is cleared.
      */
     default void onConversationCleared() {}

@@ -41,9 +41,22 @@ public class NdjsonProtocolHandler {
                 return null;
             }
 
+            // Diagnostic: dump raw system messages so we can see hook subtypes
+            if ("system".equals(type)) {
+                String subtype = JsonParser.getString(json, "subtype");
+                String rawSnip = line.substring(0, Math.min(500, line.length())).replace("\n", "\\n");
+                com.anthropic.claude.intellij.service.ClaudeApplicationService
+                    .logDiag("[DIAG-RAW-SYSTEM] subtype=" + subtype + " raw=" + rawSnip);
+            }
+
             switch (type) {
-                case "system":
-                    return parseSystemInit(json);
+                case "system": {
+                    String subtype = JsonParser.getString(json, "subtype");
+                    if (subtype == null || "init".equals(subtype)) {
+                        return parseSystemInit(json);
+                    }
+                    return parseSystemNotification(json, line);
+                }
                 case "assistant":
                     return parseAssistantMessage(json);
                 case "user":
@@ -102,6 +115,49 @@ public class NdjsonProtocolHandler {
 
         LOG.info("Parsed system init: sessionId=" + init.getSessionId() + ", model=" + init.getModel());
         return init;
+    }
+
+    /**
+     * Parses non-init system messages (hook_started, hook_progress, hook_response, compact_boundary).
+     * Extracts hook name, stdout/stderr, exit code from common shapes used by Claude CLI.
+     */
+    @SuppressWarnings("unchecked")
+    private CliMessage.SystemNotification parseSystemNotification(Map<String, Object> json, String rawLine) {
+        CliMessage.SystemNotification n = new CliMessage.SystemNotification();
+        n.setSubtype(JsonParser.getString(json, "subtype"));
+        n.setRawJson(rawLine);
+
+        // The CLI emits hook info in slightly different shapes; try the common keys.
+        n.setHookName(JsonParser.getString(json, "hook"));
+        if (n.getHookName() == null) n.setHookName(JsonParser.getString(json, "hook_name"));
+        if (n.getHookName() == null) n.setHookName(JsonParser.getString(json, "name"));
+
+        n.setStdout(JsonParser.getString(json, "stdout"));
+        n.setStderr(JsonParser.getString(json, "stderr"));
+        try {
+            Object ec = json.get("exit_code");
+            if (ec == null) ec = json.get("exitCode");
+            if (ec instanceof Number) n.setExitCode(((Number) ec).intValue());
+        } catch (Exception ignored) {}
+
+        // Some shapes nest these under a "result" object
+        Map<String, Object> resultObj = JsonParser.getMap(json, "result");
+        if (resultObj != null) {
+            if (n.getStdout() == null) n.setStdout(JsonParser.getString(resultObj, "stdout"));
+            if (n.getStderr() == null) n.setStderr(JsonParser.getString(resultObj, "stderr"));
+            if (n.getExitCode() == null) {
+                Object ec = resultObj.get("exit_code");
+                if (ec == null) ec = resultObj.get("exitCode");
+                if (ec instanceof Number) n.setExitCode(((Number) ec).intValue());
+            }
+        }
+
+        com.anthropic.claude.intellij.service.ClaudeApplicationService
+            .logDiag("[DIAG-NOTIFICATION] subtype=" + n.getSubtype()
+                + " hook=" + n.getHookName()
+                + " hasError=" + n.hasErrorIndicator());
+
+        return n;
     }
 
     @SuppressWarnings("unchecked")
