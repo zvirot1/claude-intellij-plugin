@@ -29,7 +29,7 @@ java {
 tasks {
     patchPluginXml {
         sinceBuild.set("241")
-        untilBuild.set("251.*")
+        untilBuild.set("262.*")
     }
 
     buildSearchableOptions {
@@ -46,7 +46,7 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         ideaVersion {
             sinceBuild = "241"
-            untilBuild = "251.*"
+            untilBuild = "262.*"
         }
     }
 
