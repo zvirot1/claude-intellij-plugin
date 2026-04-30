@@ -624,6 +624,24 @@ html, body {
     overflow-wrap: break-word;
 }
 
+.message-image {
+    margin: 6px 0 0 48px;
+    max-width: calc(100% - 48px);
+}
+
+.message-image img {
+    max-width: 220px;
+    max-height: 220px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    cursor: zoom-in;
+    display: block;
+}
+
+.message-image img:hover {
+    border-color: var(--claude-orange);
+}
+
 .message-assistant {
     margin: 4px 0;
 }

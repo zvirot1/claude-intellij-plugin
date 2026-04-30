@@ -588,8 +588,31 @@ public class ClaudeChatPanel implements Disposable {
                 sendToWebview("attachments_cleared", "{}");
             }
 
-            // Add the user message to the conversation model
-            conversationModel.addUserMessage(message);
+            // Decode attached images (if any) up front so we can show them
+            // in the user bubble AND send them to the CLI.
+            @SuppressWarnings("unchecked")
+            java.util.List<Object> imagesList = (java.util.List<Object>) data.get("images");
+            java.util.List<byte[]> imageDataList = null;
+            java.util.List<String> imageNames = null;
+            if (imagesList != null && !imagesList.isEmpty()) {
+                imageDataList = new java.util.ArrayList<>();
+                imageNames = new java.util.ArrayList<>();
+                int idx = 1;
+                for (Object img : imagesList) {
+                    if (img instanceof String) {
+                        try {
+                            imageDataList.add(java.util.Base64.getDecoder().decode((String) img));
+                            imageNames.add("Image " + idx);
+                        } catch (IllegalArgumentException e2) {
+                            LOG.warn("Skipping invalid base64 image data", e2);
+                        }
+                    }
+                    idx++;
+                }
+            }
+
+            // Add the user message (with images) to the conversation model
+            conversationModel.addUserMessage(message, imageDataList, imageNames);
 
             // Persist session state immediately after user sends, so auto-resume
             // works even if Claude never finishes responding (crash, network fail).
@@ -607,20 +630,8 @@ public class ClaudeChatPanel implements Disposable {
                 updateTabDisplayName(tabTitle);
             }
 
-            // Check for attached images
-            @SuppressWarnings("unchecked")
-            java.util.List<Object> imagesList = (java.util.List<Object>) data.get("images");
-            if (imagesList != null && !imagesList.isEmpty()) {
-                java.util.List<byte[]> imageDataList = new java.util.ArrayList<>();
-                for (Object img : imagesList) {
-                    if (img instanceof String) {
-                        try {
-                            imageDataList.add(java.util.Base64.getDecoder().decode((String) img));
-                        } catch (IllegalArgumentException e2) {
-                            LOG.warn("Skipping invalid base64 image data", e2);
-                        }
-                    }
-                }
+            // Send to CLI \u2014 rich (with images) or plain text
+            if (imageDataList != null && !imageDataList.isEmpty()) {
                 cliManager.sendRichMessage(message, imageDataList);
             } else {
                 cliManager.sendMessage(message);
@@ -2287,6 +2298,16 @@ public class ClaudeChatPanel implements Disposable {
                 json.append("{\"type\":\"text\",\"text\":").append(jsonString(textSeg.getText())).append("}");
             } else if (seg instanceof MessageBlock.ToolCallSegment) {
                 json.append(buildToolCallJson((MessageBlock.ToolCallSegment) seg));
+            } else if (seg instanceof MessageBlock.ImageSegment) {
+                MessageBlock.ImageSegment img = (MessageBlock.ImageSegment) seg;
+                String b64 = (img.getBytes() != null)
+                    ? java.util.Base64.getEncoder().encodeToString(img.getBytes())
+                    : "";
+                json.append("{\"type\":\"image\"")
+                    .append(",\"name\":").append(jsonString(img.getName()))
+                    .append(",\"mediaType\":").append(jsonString(img.getMediaType()))
+                    .append(",\"bytes\":").append(jsonString(b64))
+                    .append("}");
             }
         }
 

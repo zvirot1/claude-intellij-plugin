@@ -1095,7 +1095,38 @@
         applyRtlIfNeeded(contentEl);
 
         el.appendChild(contentEl);
+
+        // Render any inline image segments below the text
+        if (data.segments && data.segments.length) {
+            for (var i = 0; i < data.segments.length; i++) {
+                var seg = data.segments[i];
+                if (seg && seg.type === 'image' && seg.bytes) {
+                    el.appendChild(createImageElement(seg));
+                }
+            }
+        }
         return el;
+    }
+
+    function createImageElement(seg) {
+        var wrap = document.createElement('div');
+        wrap.className = 'message-image';
+        var img = document.createElement('img');
+        var media = seg.mediaType || 'image/png';
+        img.src = 'data:' + media + ';base64,' + seg.bytes;
+        img.alt = seg.name || 'image';
+        img.title = seg.name || '';
+        // Open the full-size image in a new browser-tab-like view on click.
+        img.addEventListener('click', function () {
+            try {
+                var w = window.open('', '_blank');
+                if (w) {
+                    w.document.write('<img src="' + img.src + '" style="max-width:100%">');
+                }
+            } catch (e) {}
+        });
+        wrap.appendChild(img);
+        return wrap;
     }
 
     function extractTextFromMessage(data) {

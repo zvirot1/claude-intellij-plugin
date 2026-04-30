@@ -306,7 +306,8 @@ public class McpServersDialog extends DialogWrapper {
         private JTextField nameField;
         private JTextField commandField;
         private JTextField argsField;
-        private JTextField envField;
+        private javax.swing.JTable envTable;
+        private javax.swing.table.DefaultTableModel envTableModel;
 
         McpServerEditDialog(Project project, String name, String command, String args, String env) {
             super(project, false);
@@ -316,7 +317,10 @@ public class McpServersDialog extends DialogWrapper {
             nameField.setText(name);
             commandField.setText(command);
             argsField.setText(args);
-            envField.setText(env);
+            // Populate env table from comma-separated KEY=val,KEY2=val2 string
+            for (Map.Entry<String, Object> e : parseEnvString(env).entrySet()) {
+                envTableModel.addRow(new Object[]{e.getKey(), String.valueOf(e.getValue())});
+            }
         }
 
         @Override
@@ -329,7 +333,40 @@ public class McpServersDialog extends DialogWrapper {
             nameField = new JTextField(30);
             commandField = new JTextField(30);
             argsField = new JTextField(30);
-            envField = new JTextField(30);
+
+            // Env vars table — 2 columns (Key, Value), inline editable
+            envTableModel = new javax.swing.table.DefaultTableModel(
+                new Object[]{"Key", "Value"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int col) { return true; }
+            };
+            envTable = new javax.swing.JTable(envTableModel);
+            envTable.setRowHeight(24);
+            envTable.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
+            javax.swing.JScrollPane envScroll = new javax.swing.JScrollPane(envTable);
+            envScroll.setPreferredSize(new Dimension(400, 120));
+
+            JButton addEnvBtn = new JButton("Add");
+            addEnvBtn.addActionListener(e -> {
+                if (envTable.isEditing()) envTable.getCellEditor().stopCellEditing();
+                envTableModel.addRow(new Object[]{"", ""});
+                int last = envTableModel.getRowCount() - 1;
+                envTable.editCellAt(last, 0);
+                envTable.requestFocusInWindow();
+            });
+            JButton removeEnvBtn = new JButton("Remove");
+            removeEnvBtn.addActionListener(e -> {
+                if (envTable.isEditing()) envTable.getCellEditor().stopCellEditing();
+                int row = envTable.getSelectedRow();
+                if (row >= 0) envTableModel.removeRow(row);
+            });
+
+            JPanel envButtons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+            envButtons.add(addEnvBtn);
+            envButtons.add(removeEnvBtn);
+            JLabel envHint = new JLabel("Tip: double-click a cell to edit.");
+            envHint.setForeground(com.intellij.util.ui.UIUtil.getContextHelpForeground());
+            envHint.setFont(com.intellij.util.ui.UIUtil.getLabelFont(com.intellij.util.ui.UIUtil.FontSize.SMALL));
 
             gbc.gridx = 0; gbc.gridy = 0;
             panel.add(new JLabel("Name:"), gbc);
@@ -347,9 +384,16 @@ public class McpServersDialog extends DialogWrapper {
             panel.add(argsField, gbc);
 
             gbc.gridx = 0; gbc.gridy = 3; gbc.fill = GridBagConstraints.NONE; gbc.weightx = 0;
-            panel.add(new JLabel("Env (KEY=val,...):"), gbc);
-            gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1;
-            panel.add(envField, gbc);
+            gbc.anchor = GridBagConstraints.NORTHWEST;
+            panel.add(new JLabel("Env:"), gbc);
+            gbc.gridx = 1; gbc.fill = GridBagConstraints.BOTH; gbc.weightx = 1; gbc.weighty = 1;
+            panel.add(envScroll, gbc);
+
+            gbc.gridx = 1; gbc.gridy = 4; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weighty = 0;
+            panel.add(envButtons, gbc);
+
+            gbc.gridy = 5;
+            panel.add(envHint, gbc);
 
             return panel;
         }
@@ -357,6 +401,25 @@ public class McpServersDialog extends DialogWrapper {
         String getServerName() { return nameField.getText().trim(); }
         String getCommand() { return commandField.getText().trim(); }
         String getArgs() { return argsField.getText().trim(); }
-        String getEnv() { return envField.getText().trim(); }
+        /**
+         * Returns env vars as comma-separated KEY=val,KEY2=val2 string (matches the
+         * legacy format expected by the parent dialog's saveAllServers()).
+         * Skips rows with empty keys to avoid orphan entries.
+         */
+        String getEnv() {
+            // Commit any in-progress edit first
+            if (envTable.isEditing()) envTable.getCellEditor().stopCellEditing();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < envTableModel.getRowCount(); i++) {
+                Object k = envTableModel.getValueAt(i, 0);
+                Object v = envTableModel.getValueAt(i, 1);
+                String key = (k == null) ? "" : k.toString().trim();
+                String val = (v == null) ? "" : v.toString().trim();
+                if (key.isEmpty()) continue;
+                if (sb.length() > 0) sb.append(",");
+                sb.append(key).append("=").append(val);
+            }
+            return sb.toString();
+        }
     }
 }
