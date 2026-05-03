@@ -136,11 +136,12 @@
         </div>
 
         <div id="input-area">
-            <!-- Pinned context pills (Q-style): active file + any @-mentioned files.
-                 The active file chip auto-updates as you switch editor tabs.
-                 Click X on any chip to remove it from the pinned context. -->
-            <div id="file-chips" class="file-chips hidden"></div>
             <div id="input-wrapper">
+                <!-- Pinned context pills (Q-style): active file + any @-mentioned files.
+                     Lives INSIDE the input frame (above the textarea row) so the
+                     pills feel like they belong to the same input field. -->
+                <div id="file-chips" class="file-chips hidden"></div>
+                <div class="input-row">
                 <button id="attach-btn" class="icon-btn attach-btn" title="Attach File">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                         <path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2 2 0 013 3L6.5 12a.5.5 0 01-.7-.7L11 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -162,6 +163,7 @@
                         <rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/>
                     </svg>
                 </button>
+                </div><!-- /.input-row -->
             </div>
             <!-- Input toolbar: + | effort dots | mode + send -->
             <div id="input-toolbar">

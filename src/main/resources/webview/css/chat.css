@@ -1288,8 +1288,10 @@ html, body {
 }
 
 #input-wrapper {
+    /* Now a column container so pinned chips can sit inside the input frame
+     * above the actual textarea row (Amazon Q parity). */
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 6px;
     background: var(--bg-input);
     border: 1px solid var(--border-input);
@@ -1300,6 +1302,12 @@ html, body {
 
 #input-wrapper:focus-within {
     border-color: var(--border-input-focus);
+}
+
+#input-wrapper .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
 }
 
 #message-input {
@@ -1688,7 +1696,12 @@ html, body {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: 6px 12px 0;
+    /* No outer padding — we're inside #input-wrapper which already pads. */
+    padding: 0;
+}
+
+.file-chips.hidden {
+    display: none;
 }
 
 /* Active file pinned chip — Amazon Q-style.
