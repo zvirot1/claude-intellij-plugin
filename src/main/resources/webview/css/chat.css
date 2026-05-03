@@ -1685,6 +1685,56 @@ html, body {
     padding: 6px 12px 0;
 }
 
+/* Active file bar — Amazon Q-style "Active file" pin shown above the input. */
+.active-file-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 0;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.active-file-bar.hidden {
+    display: none;
+}
+
+.active-file-icon {
+    flex-shrink: 0;
+}
+
+.active-file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-family: var(--font-mono, monospace);
+}
+
+.active-file-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.active-file-toggle input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.active-file-toggle-text {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.active-file-toggle:hover .active-file-toggle-text {
+    color: var(--text-primary);
+}
+
 .file-chip {
     display: inline-flex;
     align-items: center;

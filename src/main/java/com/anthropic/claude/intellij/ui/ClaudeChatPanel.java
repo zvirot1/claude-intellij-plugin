@@ -76,6 +76,7 @@ public class ClaudeChatPanel implements Disposable {
         initSessionManager();
         initThemeListener();
         initSelectionListener();
+        initActiveFileListener();
         attachmentManager = new AttachmentManager(project);
 
         Disposer.register(this, () -> cleanup());
@@ -367,6 +368,77 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     /**
+     * Tracks the currently active editor file (the tab the user is looking at)
+     * and pushes it to the webview as an "Active file" chip. Mirrors Amazon Q's
+     * Active file affordance — the chip can be auto-attached to every message
+     * via the toggle (see {@link ClaudeSettings.State#attachActiveFile}).
+     */
+    private void initActiveFileListener() {
+        // Send the current active file once on startup
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+            sendActiveFileToWebview(getCurrentActiveFile());
+        });
+
+        // Subscribe to editor switches via the project message bus
+        project.getMessageBus().connect(this).subscribe(
+            com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            new com.intellij.openapi.fileEditor.FileEditorManagerListener() {
+                @Override
+                public void selectionChanged(@org.jetbrains.annotations.NotNull com.intellij.openapi.fileEditor.FileEditorManagerEvent event) {
+                    sendActiveFileToWebview(event.getNewFile());
+                }
+            }
+        );
+    }
+
+    /** @return the VirtualFile currently visible in the foreground editor, or null. */
+    private com.intellij.openapi.vfs.VirtualFile getCurrentActiveFile() {
+        try {
+            com.intellij.openapi.vfs.VirtualFile[] selected =
+                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).getSelectedFiles();
+            return (selected.length > 0) ? selected[0] : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Builds an XML-tagged context block for the currently active editor file.
+     * Returns empty string if there is no active file or it can't be read.
+     * Same wire format as {@link AttachmentManager#buildFileContext()} so the
+     * CLI sees a consistent context shape.
+     */
+    private String buildActiveFileContext() {
+        com.intellij.openapi.vfs.VirtualFile file = getCurrentActiveFile();
+        if (file == null || file.isDirectory() || !file.isValid()) return "";
+        try {
+            String content = new String(file.contentsToByteArray(), file.getCharset());
+            String relPath = file.getPath();
+            String basePath = project.getBasePath();
+            if (basePath != null && relPath.startsWith(basePath)) {
+                relPath = relPath.substring(basePath.length() + 1);
+            }
+            return "<file path=\"" + relPath.replace("\"", "&quot;") + "\">\n"
+                + content
+                + "\n</file>\n";
+        } catch (Exception e) {
+            LOG.warn("Failed to read active file " + file.getPath(), e);
+            return "";
+        }
+    }
+
+    /** Pushes the active file's path/name to the webview (or {null} if none). */
+    private void sendActiveFileToWebview(com.intellij.openapi.vfs.VirtualFile file) {
+        if (file == null) {
+            sendToWebview("active_file_changed", "{\"path\":null,\"name\":null}");
+            return;
+        }
+        sendToWebview("active_file_changed",
+            "{\"path\":" + jsonString(file.getPath())
+            + ",\"name\":" + jsonString(file.getName()) + "}");
+    }
+
+    /**
      * Handles messages received from the webview JavaScript.
      */
     private void handleWebviewMessage(String type, String payload) {
@@ -450,6 +522,9 @@ public class ClaudeChatPanel implements Disposable {
                 break;
             case "change_effort":
                 handleChangeEffort(payload);
+                break;
+            case "set_attach_active_file":
+                handleSetAttachActiveFile(payload);
                 break;
             default:
                 LOG.warn("Unknown message type from webview: " + type);
@@ -578,6 +653,15 @@ public class ClaudeChatPanel implements Disposable {
             // If CLI is not running, start it
             if (!cliManager.isRunning()) {
                 startCli();
+            }
+
+            // Prepend the active editor file if the user enabled the
+            // "Attach active file" toggle (Amazon Q parity).
+            if (ClaudeSettings.getInstance().getState().attachActiveFile) {
+                String activeFileContext = buildActiveFileContext();
+                if (!activeFileContext.isEmpty()) {
+                    message = activeFileContext + "\n" + message;
+                }
             }
 
             // Prepend file context from attachments if any
@@ -1499,6 +1583,25 @@ public class ClaudeChatPanel implements Disposable {
      * Restarts CLI with --resume to apply the new --effort flag immediately
      * (like VS Code, where each query spawns a new CLI process).
      */
+    /**
+     * Persist the "Attach active file to every message" toggle from the webview UI.
+     * The setting is global so the choice survives restarts and propagates across tabs.
+     */
+    private void handleSetAttachActiveFile(String payload) {
+        try {
+            java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
+            Object enabled = data.get("enabled");
+            boolean on = enabled instanceof Boolean && ((Boolean) enabled);
+            ClaudeSettings settings = ClaudeSettings.getInstance();
+            if (settings != null) {
+                settings.getState().attachActiveFile = on;
+            }
+            LOG.info("[DIAG] Attach active file = " + on);
+        } catch (Exception e) {
+            LOG.warn("Failed to parse set_attach_active_file payload", e);
+        }
+    }
+
     private void handleChangeEffort(String payload) {
         try {
             java.util.Map<String, Object> data = com.anthropic.claude.intellij.util.JsonParser.parseObject(payload);
@@ -2054,6 +2157,13 @@ public class ClaudeChatPanel implements Disposable {
         boolean ctrlEnter = com.anthropic.claude.intellij.settings.ClaudeSettings.getInstance()
             .getState().useCtrlEnterToSend;
         sendToWebview("set_enter_mode", "{\"ctrlEnter\":" + ctrlEnter + "}");
+
+        // Send "Attach active file" toggle state so the webview restores the checkbox
+        boolean attachActive = ClaudeSettings.getInstance().getState().attachActiveFile;
+        sendToWebview("attach_active_file_changed", "{\"enabled\":" + attachActive + "}");
+
+        // Send the current active file (if any) so the chip shows up immediately
+        sendActiveFileToWebview(getCurrentActiveFile());
 
         // Load last session history from JSONL on disk (without starting CLI)
         if (shouldResumeLastSession && !historyLoadedFromDisk) {

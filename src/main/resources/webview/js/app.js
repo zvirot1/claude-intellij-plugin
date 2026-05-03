@@ -39,6 +39,9 @@
     var headerStopBtn = document.getElementById('header-stop-btn');
     var newTabBtn = document.getElementById('new-tab-btn');
     var closeTabBtn = document.getElementById('close-tab-btn');
+    var activeFileBar = document.getElementById('active-file-bar');
+    var activeFileNameEl = document.getElementById('active-file-name');
+    var activeFileToggle = document.getElementById('active-file-toggle');
     var headerTitle = document.getElementById('header-title');
     var modeBadge = document.getElementById('session-mode');
     var modePopup = document.getElementById('mode-popup');
@@ -258,6 +261,13 @@
             bridge.sendToJava('new_session', {});
         });
 
+        // Active file toggle — persist the choice via Java settings.
+        if (activeFileToggle) {
+            activeFileToggle.addEventListener('change', function () {
+                bridge.sendToJava('set_attach_active_file', { enabled: activeFileToggle.checked });
+            });
+        }
+
         permissionAcceptBtn.addEventListener('click', function () {
             if (state.pendingPermission) {
                 bridge.sendToJava('accept_permission', state.pendingPermission);
@@ -476,6 +486,8 @@
             if (data && data.message) showToast(data.message);
         });
         bridge.on('selection_indicator', handleSelectionIndicator);
+        bridge.on('active_file_changed', handleActiveFileChanged);
+        bridge.on('attach_active_file_changed', handleAttachActiveFileChanged);
         bridge.on('mode_changed', function(data) {
             if (data && data.mode) setMode(data.mode);
         });
@@ -519,6 +531,30 @@
         } else {
             badge.classList.add('hidden');
         }
+    }
+
+    // ==================== Active File Pin ====================
+
+    /** Updates the chip when the user switches editor tabs in the IDE. */
+    function handleActiveFileChanged(data) {
+        if (!activeFileBar) return;
+        if (!data || !data.name) {
+            activeFileBar.classList.add('hidden');
+            if (activeFileNameEl) activeFileNameEl.textContent = '';
+            if (activeFileNameEl) activeFileNameEl.removeAttribute('title');
+            return;
+        }
+        if (activeFileNameEl) {
+            activeFileNameEl.textContent = data.name;
+            if (data.path) activeFileNameEl.title = data.path;
+        }
+        activeFileBar.classList.remove('hidden');
+    }
+
+    /** Reflects the persisted setting back into the checkbox on startup / cross-tab sync. */
+    function handleAttachActiveFileChanged(data) {
+        if (!activeFileToggle || !data) return;
+        activeFileToggle.checked = !!data.enabled;
     }
 
     // ==================== Edit Staged (Accept/Reject) ====================

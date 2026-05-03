@@ -39,6 +39,13 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
         /** When true, the plugin emits verbose [DIAG-*] log lines (only enable for bug investigation). */
         public boolean diagnosticLogging = false;
 
+        /**
+         * When true, every outgoing message automatically includes the contents of the
+         * currently active editor file as context — Amazon Q-style "Active file" pin.
+         * Default is OFF: users opt in per-tab via the toggle next to the input.
+         */
+        public boolean attachActiveFile = false;
+
         /** Whether to auto-save files after Claude edits them. */
         public boolean autosave = true;
 

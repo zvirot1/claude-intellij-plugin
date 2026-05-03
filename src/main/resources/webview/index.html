@@ -136,6 +136,16 @@
         </div>
 
         <div id="input-area">
+            <!-- Active file pin: shows the file currently open in the editor.
+                 When the toggle is ON, that file is auto-attached to every message. -->
+            <div id="active-file-bar" class="active-file-bar hidden">
+                <span class="active-file-icon">📄</span>
+                <span id="active-file-name" class="active-file-name"></span>
+                <label class="active-file-toggle" title="Auto-attach active file to every message">
+                    <input type="checkbox" id="active-file-toggle">
+                    <span class="active-file-toggle-text">Attach</span>
+                </label>
+            </div>
             <div id="file-chips" class="file-chips hidden"></div>
             <div id="input-wrapper">
                 <button id="attach-btn" class="icon-btn attach-btn" title="Attach File">
