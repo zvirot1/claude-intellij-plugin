@@ -1685,54 +1685,27 @@ html, body {
     padding: 6px 12px 0;
 }
 
-/* Active file bar — Amazon Q-style "Active file" pin shown above the input. */
-.active-file-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px 0;
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
+/* Active file pinned chip — Amazon Q-style.
+ * Same .file-chip base, with subtle accent so the user knows it was
+ * auto-pinned vs explicitly attached, and a small "current file" hint label. */
+.file-chip-active {
+    background: var(--claude-orange-light, rgba(217, 119, 87, 0.12)) !important;
+    border-color: var(--claude-orange, #d97757) !important;
+    color: var(--text-primary);
 }
 
-.active-file-bar.hidden {
-    display: none;
-}
-
-.active-file-icon {
+.file-chip-icon {
+    font-size: 10px;
+    line-height: 1;
     flex-shrink: 0;
 }
 
-.active-file-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-primary);
-    font-family: var(--font-mono, monospace);
-}
-
-.active-file-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    user-select: none;
-    flex-shrink: 0;
-}
-
-.active-file-toggle input[type="checkbox"] {
-    margin: 0;
-    cursor: pointer;
-}
-
-.active-file-toggle-text {
-    font-size: var(--font-size-xs);
+.file-chip-hint {
+    font-size: 10px;
     color: var(--text-secondary);
-}
-
-.active-file-toggle:hover .active-file-toggle-text {
-    color: var(--text-primary);
+    opacity: 0.75;
+    margin-left: 2px;
+    flex-shrink: 0;
 }
 
 .file-chip {

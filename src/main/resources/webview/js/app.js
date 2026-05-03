@@ -39,9 +39,11 @@
     var headerStopBtn = document.getElementById('header-stop-btn');
     var newTabBtn = document.getElementById('new-tab-btn');
     var closeTabBtn = document.getElementById('close-tab-btn');
-    var activeFileBar = document.getElementById('active-file-bar');
-    var activeFileNameEl = document.getElementById('active-file-name');
-    var activeFileToggle = document.getElementById('active-file-toggle');
+    // Active file pin (Amazon Q-style): a chip in #file-chips showing the file
+    // currently open in the editor. The user can click X to dismiss it for the
+    // current message; it re-appears when they switch tabs.
+    var activeFile = { path: null, name: null, dismissed: false };
+    var lastAttachments = []; // mirror of last attachments from Java (for re-render)
     var headerTitle = document.getElementById('header-title');
     var modeBadge = document.getElementById('session-mode');
     var modePopup = document.getElementById('mode-popup');
@@ -225,16 +227,21 @@
         var text = messageInput.value.trim();
         if (!text || state.isStreaming) return;
 
+        // Active-file pin: if the chip is currently shown (not dismissed),
+        // tell Java to attach the active file via the same context pipeline
+        // used by @-mention / attach button (no extra "wire format").
+        var includeActiveFile = !!(activeFile.name && !activeFile.dismissed);
+
         // Include attached images if any
+        var payload = { message: text, includeActiveFile: includeActiveFile };
         if (state.attachedImages.length > 0) {
             var imageData = [];
             for (var i = 0; i < state.attachedImages.length; i++) {
                 imageData.push(state.attachedImages[i].bytes);
             }
-            bridge.sendToJava('send_message', { message: text, images: imageData });
-        } else {
-            bridge.sendToJava('send_message', { message: text });
+            payload.images = imageData;
         }
+        bridge.sendToJava('send_message', payload);
 
         messageInput.value = '';
         messageInput.style.direction = 'ltr';
@@ -261,12 +268,6 @@
             bridge.sendToJava('new_session', {});
         });
 
-        // Active file toggle — persist the choice via Java settings.
-        if (activeFileToggle) {
-            activeFileToggle.addEventListener('change', function () {
-                bridge.sendToJava('set_attach_active_file', { enabled: activeFileToggle.checked });
-            });
-        }
 
         permissionAcceptBtn.addEventListener('click', function () {
             if (state.pendingPermission) {
@@ -533,28 +534,29 @@
         }
     }
 
-    // ==================== Active File Pin ====================
+    // ==================== Active File Pin (Amazon Q style) ====================
 
-    /** Updates the chip when the user switches editor tabs in the IDE. */
+    /** Called when the user switches editor tabs in the IDE. The chip is
+     *  re-shown automatically (any prior dismiss is reset on tab change). */
     function handleActiveFileChanged(data) {
-        if (!activeFileBar) return;
+        var prevPath = activeFile.path;
         if (!data || !data.name) {
-            activeFileBar.classList.add('hidden');
-            if (activeFileNameEl) activeFileNameEl.textContent = '';
-            if (activeFileNameEl) activeFileNameEl.removeAttribute('title');
-            return;
+            activeFile = { path: null, name: null, dismissed: false };
+        } else {
+            activeFile = {
+                path: data.path,
+                name: data.name,
+                // If the path changed, undismiss; otherwise keep prior state.
+                dismissed: (data.path === prevPath) ? activeFile.dismissed : false
+            };
         }
-        if (activeFileNameEl) {
-            activeFileNameEl.textContent = data.name;
-            if (data.path) activeFileNameEl.title = data.path;
-        }
-        activeFileBar.classList.remove('hidden');
+        renderAllChips();
     }
 
-    /** Reflects the persisted setting back into the checkbox on startup / cross-tab sync. */
+    /** No-op now — kept for back-compat with the Java-side initial-state event. */
     function handleAttachActiveFileChanged(data) {
-        if (!activeFileToggle || !data) return;
-        activeFileToggle.checked = !!data.enabled;
+        // Q-style behavior: the chip is always shown when there is an active file
+        // (until the user clicks X). No global toggle.
     }
 
     // ==================== Edit Staged (Accept/Reject) ====================
@@ -2132,39 +2134,87 @@
     // ==================== File Attachment Chip Management ====================
 
     function handleAttachmentsUpdated(data) {
+        lastAttachments = (data && data.attachments) ? data.attachments : [];
+        renderAllChips();
+    }
+
+    function handleAttachmentsCleared() {
+        lastAttachments = [];
+        renderAllChips();
+    }
+
+    /**
+     * Re-renders both the auto-pinned active-file chip and any user-attached
+     * @-mention chips into #file-chips. Active file chip is always first and
+     * styled with a small "current file" affordance (Amazon Q parity).
+     */
+    function renderAllChips() {
         var container = document.getElementById('file-chips');
-        if (!data.attachments || data.attachments.length === 0) {
+        if (!container) return;
+        container.innerHTML = '';
+
+        var hasActive = activeFile.name && !activeFile.dismissed;
+        var hasAttachments = lastAttachments && lastAttachments.length > 0;
+
+        if (!hasActive && !hasAttachments) {
             container.classList.add('hidden');
-            container.innerHTML = '';
             return;
         }
         container.classList.remove('hidden');
-        container.innerHTML = '';
-        for (var i = 0; i < data.attachments.length; i++) {
+
+        // Auto-pinned active file chip — first, with a distinguishing class.
+        if (hasActive) {
             var chip = document.createElement('span');
-            chip.className = 'file-chip';
+            chip.className = 'file-chip file-chip-active';
+            chip.title = activeFile.path || activeFile.name;
+
+            var icon = document.createElement('span');
+            icon.className = 'file-chip-icon';
+            icon.textContent = '📄';
+            chip.appendChild(icon);
+
             var nameSpan = document.createElement('span');
             nameSpan.className = 'file-chip-name';
-            nameSpan.textContent = data.attachments[i].label;
-            nameSpan.title = data.attachments[i].path;
+            nameSpan.textContent = activeFile.name;
             chip.appendChild(nameSpan);
+
+            var hint = document.createElement('span');
+            hint.className = 'file-chip-hint';
+            hint.textContent = 'current file';
+            chip.appendChild(hint);
+
             var removeBtn = document.createElement('button');
             removeBtn.className = 'file-chip-remove';
             removeBtn.textContent = '×';
-            removeBtn.setAttribute('data-index', i);
+            removeBtn.title = 'Remove for this message';
             removeBtn.addEventListener('click', function () {
-                var idx = parseInt(this.getAttribute('data-index'), 10);
-                bridge.sendToJava('remove_attachment', { index: idx });
+                activeFile.dismissed = true;
+                renderAllChips();
             });
             chip.appendChild(removeBtn);
             container.appendChild(chip);
         }
-    }
 
-    function handleAttachmentsCleared() {
-        var container = document.getElementById('file-chips');
-        container.classList.add('hidden');
-        container.innerHTML = '';
+        // User-attached files via @-mention or attach button — same as before.
+        for (var i = 0; i < lastAttachments.length; i++) {
+            var c = document.createElement('span');
+            c.className = 'file-chip';
+            var ns = document.createElement('span');
+            ns.className = 'file-chip-name';
+            ns.textContent = lastAttachments[i].label;
+            ns.title = lastAttachments[i].path;
+            c.appendChild(ns);
+            var rb = document.createElement('button');
+            rb.className = 'file-chip-remove';
+            rb.textContent = '×';
+            rb.setAttribute('data-index', i);
+            rb.addEventListener('click', function () {
+                var idx = parseInt(this.getAttribute('data-index'), 10);
+                bridge.sendToJava('remove_attachment', { index: idx });
+            });
+            c.appendChild(rb);
+            container.appendChild(c);
+        }
     }
 
     // Wire attach button

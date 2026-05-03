@@ -655,9 +655,12 @@ public class ClaudeChatPanel implements Disposable {
                 startCli();
             }
 
-            // Prepend the active editor file if the user enabled the
-            // "Attach active file" toggle (Amazon Q parity).
-            if (ClaudeSettings.getInstance().getState().attachActiveFile) {
+            // Active file pin (Amazon Q parity): the webview tells us per-message
+            // whether the active-file chip was visible (not dismissed). When true,
+            // include the file via the same XML context pipeline as @-mentions.
+            Object includeActiveObj = data.get("includeActiveFile");
+            boolean includeActive = includeActiveObj instanceof Boolean && ((Boolean) includeActiveObj);
+            if (includeActive) {
                 String activeFileContext = buildActiveFileContext();
                 if (!activeFileContext.isEmpty()) {
                     message = activeFileContext + "\n" + message;
