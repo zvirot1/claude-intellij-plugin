@@ -2178,11 +2178,6 @@
             nameSpan.textContent = activeFile.name;
             chip.appendChild(nameSpan);
 
-            var hint = document.createElement('span');
-            hint.className = 'file-chip-hint';
-            hint.textContent = 'current file';
-            chip.appendChild(hint);
-
             var removeBtn = document.createElement('button');
             removeBtn.className = 'file-chip-remove';
             removeBtn.textContent = '×';

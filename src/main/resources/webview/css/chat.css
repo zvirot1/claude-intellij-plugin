@@ -1705,30 +1705,24 @@ html, body {
 }
 
 /* Active file pinned chip — Amazon Q-style.
- * Calm IDE-blue accent (NOT orange/red — those read as error). The
- * "current file" hint sits inside the pill, after the filename. */
+ * Calm IDE-blue accent (NOT orange/red — those read as error).
+ * Just the filename is shown; no extra label. */
 .file-chip-active {
     background: var(--bg-elevated);
     border: 1px solid var(--accent-blue);
-    color: var(--text-primary);
+    color: var(--accent-blue);
+}
+
+.file-chip-active .file-chip-name {
+    color: var(--accent-blue);
 }
 
 .file-chip-icon {
     font-size: 11px;
     line-height: 1;
     flex-shrink: 0;
-    opacity: 0.85;
-}
-
-.file-chip-hint {
-    font-size: 10px;
-    color: var(--accent-blue);
     opacity: 0.95;
-    margin-left: 4px;
-    padding-left: 6px;
-    border-left: 1px solid var(--border-subtle);
-    flex-shrink: 0;
-    white-space: nowrap;
+    color: var(--accent-blue);
 }
 
 .file-chip {
