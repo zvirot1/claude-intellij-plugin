@@ -130,6 +130,97 @@ public class ClaudeChatPanel implements Disposable {
         }
 
         rootPanel.add(browser.getComponent(), BorderLayout.CENTER);
+
+        // IntelliJ's tool window absorbs Ctrl/Cmd+V before it reaches the JCEF
+        // browser, so paste-via-shortcut would silently no-op in the chat input.
+        // Wire a Swing-level key binding that reads the system clipboard and
+        // forwards its contents to the webview as a 'paste_from_clipboard' event.
+        registerPasteShortcut();
+    }
+
+    /**
+     * Adds a Swing-level Ctrl/Cmd+V binding on the chat panel that captures
+     * the system clipboard and forwards it to the JCEF webview. Without this,
+     * IntelliJ's tool window swallows the shortcut and the user's paste does
+     * nothing in the chat input.
+     */
+    private void registerPasteShortcut() {
+        int menuMask = java.awt.Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        javax.swing.KeyStroke pasteKs = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_V, menuMask);
+
+        // Bind on the rootPanel (and the browser component) so the shortcut
+        // works whether the user clicked into the editor first or not.
+        bindPasteAction(rootPanel, pasteKs);
+        if (browser != null && browser.getComponent() != null) {
+            bindPasteAction(browser.getComponent(), pasteKs);
+        }
+    }
+
+    private void bindPasteAction(javax.swing.JComponent comp, javax.swing.KeyStroke ks) {
+        comp.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(ks, "claude.paste");
+        comp.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(ks, "claude.paste");
+        comp.getActionMap().put("claude.paste", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                handlePasteShortcut();
+            }
+        });
+    }
+
+    /**
+     * Reads the system clipboard and forwards either text or an image to the
+     * webview. Image bytes are sent as base64 so the existing image-attachment
+     * pipeline (state.attachedImages, paste handler) can reuse them.
+     */
+    private void handlePasteShortcut() {
+        try {
+            java.awt.datatransfer.Transferable tr =
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
+            if (tr == null) return;
+
+            // 1) Image takes priority — most users hit Ctrl+V to attach screenshots.
+            if (tr.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.imageFlavor)) {
+                Object img = tr.getTransferData(java.awt.datatransfer.DataFlavor.imageFlavor);
+                if (img instanceof java.awt.Image) {
+                    String b64 = encodeImageAsPngBase64((java.awt.Image) img);
+                    if (b64 != null) {
+                        sendToWebview("paste_from_clipboard",
+                            "{\"kind\":\"image\",\"mediaType\":\"image/png\",\"bytes\":" + jsonString(b64) + "}");
+                        return;
+                    }
+                }
+            }
+
+            // 2) Plain text — let the webview insert it at the caret.
+            if (tr.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                Object txt = tr.getTransferData(java.awt.datatransfer.DataFlavor.stringFlavor);
+                if (txt instanceof String) {
+                    sendToWebview("paste_from_clipboard",
+                        "{\"kind\":\"text\",\"text\":" + jsonString((String) txt) + "}");
+                }
+            }
+        } catch (Exception ex) {
+            LOG.warn("Paste-shortcut clipboard read failed", ex);
+        }
+    }
+
+    private String encodeImageAsPngBase64(java.awt.Image img) {
+        try {
+            int w = img.getWidth(null);
+            int h = img.getHeight(null);
+            if (w <= 0 || h <= 0) return null;
+            java.awt.image.BufferedImage buf =
+                new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            java.awt.Graphics2D g = buf.createGraphics();
+            g.drawImage(img, 0, 0, null);
+            g.dispose();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(buf, "png", out);
+            return java.util.Base64.getEncoder().encodeToString(out.toByteArray());
+        } catch (Exception e) {
+            LOG.warn("Failed to encode clipboard image as PNG", e);
+            return null;
+        }
     }
 
     private void initCliManager() {

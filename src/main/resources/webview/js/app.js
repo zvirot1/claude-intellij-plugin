@@ -487,6 +487,7 @@
             if (data && data.message) showToast(data.message);
         });
         bridge.on('selection_indicator', handleSelectionIndicator);
+        bridge.on('paste_from_clipboard', handlePasteFromClipboard);
         bridge.on('active_file_changed', handleActiveFileChanged);
         bridge.on('attach_active_file_changed', handleAttachActiveFileChanged);
         bridge.on('mode_changed', function(data) {
@@ -2284,6 +2285,46 @@
             }
         }
         return false;
+    }
+
+    /**
+     * Handles a Ctrl/Cmd+V from Java (the IDE intercepts the shortcut before
+     * it reaches the webview). Java forwards either an image (base64 PNG) or
+     * plain text; we route into the same place the in-webview paste handler
+     * would have, so behavior is identical to a webview-native paste.
+     */
+    function handlePasteFromClipboard(data) {
+        if (!data) return;
+        if (data.kind === 'image' && data.bytes) {
+            // Convert base64 to a Blob -> File so we reuse addImageAttachment().
+            try {
+                var binary = atob(data.bytes);
+                var len = binary.length;
+                var bytes = new Uint8Array(len);
+                for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+                var blob = new Blob([bytes], { type: data.mediaType || 'image/png' });
+                var file = new File([blob], 'clipboard.png', { type: data.mediaType || 'image/png' });
+                addImageAttachment(file);
+                if (messageInput) messageInput.focus();
+            } catch (e) {
+                console.warn('paste image decode failed', e);
+            }
+            return;
+        }
+        if (data.kind === 'text' && typeof data.text === 'string') {
+            // Insert at the current caret position in the textarea.
+            if (!messageInput) return;
+            messageInput.focus();
+            var start = messageInput.selectionStart || 0;
+            var end = messageInput.selectionEnd || 0;
+            var v = messageInput.value;
+            messageInput.value = v.slice(0, start) + data.text + v.slice(end);
+            var caret = start + data.text.length;
+            messageInput.selectionStart = messageInput.selectionEnd = caret;
+            // Re-run the size/state hooks the native paste event would trigger.
+            autoResizeTextarea();
+            updateSendButton();
+        }
     }
 
     function addImageAttachment(file) {
