@@ -28,7 +28,10 @@
     --border-primary: #3e3e42;
     --border-subtle: #2d2d30;
     --border-input: #3e3e42;
-    --border-input-focus: var(--claude-orange);
+    /* Focus / accent uses a calm IDE-blue (was orange — too close to error red).
+     * Mirrors VS Code's accent. */
+    --accent-blue: #569cd6;
+    --border-input-focus: var(--accent-blue);
     --border-permission: var(--claude-orange);
     --border-error: #d32f2f;
 
@@ -84,7 +87,10 @@ body.light {
     --border-primary: #d4d4d8;
     --border-subtle: #e4e4e7;
     --border-input: #d4d4d8;
-    --border-input-focus: var(--claude-orange);
+    /* Focus / accent uses a calm IDE-blue (was orange — too close to error red).
+     * Mirrors VS Code's accent. */
+    --accent-blue: #0066cc;
+    --border-input-focus: var(--accent-blue);
     --border-permission: var(--claude-orange);
     --border-error: #dc2626;
 
@@ -1685,30 +1691,31 @@ html, body {
     padding: 6px 12px 0;
 }
 
-/* Active file pinned chip — Amazon Q-style neutral pill.
- * Subtle gray (NOT orange/red — those signal errors) with a tiny doc icon
- * so the user knows it was auto-pinned vs explicitly attached. */
+/* Active file pinned chip — Amazon Q-style.
+ * Calm IDE-blue accent (NOT orange/red — those read as error). The
+ * "current file" hint sits inside the pill, after the filename. */
 .file-chip-active {
-    /* same base as .file-chip, plus a hairline-thicker border for emphasis */
     background: var(--bg-elevated);
-    border: 1px solid var(--border-primary, var(--border-subtle));
+    border: 1px solid var(--accent-blue);
     color: var(--text-primary);
 }
 
 .file-chip-icon {
-    /* Inline SVG-like document glyph — neutral, no color */
     font-size: 11px;
     line-height: 1;
     flex-shrink: 0;
-    opacity: 0.8;
+    opacity: 0.85;
 }
 
 .file-chip-hint {
     font-size: 10px;
-    color: var(--text-secondary);
-    opacity: 0.75;
-    margin-left: 2px;
+    color: var(--accent-blue);
+    opacity: 0.95;
+    margin-left: 4px;
+    padding-left: 6px;
+    border-left: 1px solid var(--border-subtle);
     flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .file-chip {
