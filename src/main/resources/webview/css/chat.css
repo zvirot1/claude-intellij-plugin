@@ -1685,19 +1685,22 @@ html, body {
     padding: 6px 12px 0;
 }
 
-/* Active file pinned chip — Amazon Q-style.
- * Same .file-chip base, with subtle accent so the user knows it was
- * auto-pinned vs explicitly attached, and a small "current file" hint label. */
+/* Active file pinned chip — Amazon Q-style neutral pill.
+ * Subtle gray (NOT orange/red — those signal errors) with a tiny doc icon
+ * so the user knows it was auto-pinned vs explicitly attached. */
 .file-chip-active {
-    background: var(--claude-orange-light, rgba(217, 119, 87, 0.12)) !important;
-    border-color: var(--claude-orange, #d97757) !important;
+    /* same base as .file-chip, plus a hairline-thicker border for emphasis */
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-primary, var(--border-subtle));
     color: var(--text-primary);
 }
 
 .file-chip-icon {
-    font-size: 10px;
+    /* Inline SVG-like document glyph — neutral, no color */
+    font-size: 11px;
     line-height: 1;
     flex-shrink: 0;
+    opacity: 0.8;
 }
 
 .file-chip-hint {
