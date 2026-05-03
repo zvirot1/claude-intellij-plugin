@@ -655,22 +655,27 @@ public class ClaudeChatPanel implements Disposable {
                 startCli();
             }
 
-            // Active file pin (Amazon Q parity): the webview tells us per-message
-            // whether the active-file chip was visible (not dismissed). When true,
-            // include the file via the same XML context pipeline as @-mentions.
+            // Split what the user sees (bubble) from what the CLI receives.
+            // The bubble must show only the typed text \u2014 file-context XML is for
+            // Claude's eyes, not the user's transcript (Amazon Q parity).
+            String displayText = message;
+            String cliText = message;
+
+            // Active file pin: when the chip is visible (not dismissed),
+            // prepend the active editor file as XML context \u2014 to CLI only.
             Object includeActiveObj = data.get("includeActiveFile");
             boolean includeActive = includeActiveObj instanceof Boolean && ((Boolean) includeActiveObj);
             if (includeActive) {
                 String activeFileContext = buildActiveFileContext();
                 if (!activeFileContext.isEmpty()) {
-                    message = activeFileContext + "\n" + message;
+                    cliText = activeFileContext + "\n" + cliText;
                 }
             }
 
-            // Prepend file context from attachments if any
+            // @-mention attachments \u2014 same treatment, prepend to CLI text only.
             String fileContext = attachmentManager.buildFileContext();
             if (!fileContext.isEmpty()) {
-                message = fileContext + "\n" + message;
+                cliText = fileContext + "\n" + cliText;
                 attachmentManager.clearAttachments();
                 sendToWebview("attachments_cleared", "{}");
             }
@@ -698,8 +703,8 @@ public class ClaudeChatPanel implements Disposable {
                 }
             }
 
-            // Add the user message (with images) to the conversation model
-            conversationModel.addUserMessage(message, imageDataList, imageNames);
+            // Bubble shows only the typed text (no XML / file content)
+            conversationModel.addUserMessage(displayText, imageDataList, imageNames);
 
             // Persist session state immediately after user sends, so auto-resume
             // works even if Claude never finishes responding (crash, network fail).
@@ -709,19 +714,19 @@ public class ClaudeChatPanel implements Disposable {
                 }
             } catch (Exception ignored) {}
 
-            // Set tab name from first user message (like Eclipse)
+            // Set tab name from first user message (use the clean displayed text)
             if (!tabNameSet) {
                 tabNameSet = true;
-                String tabTitle = message.trim();
+                String tabTitle = displayText.trim();
                 if (tabTitle.length() > 30) tabTitle = tabTitle.substring(0, 30) + "\u2026";
                 updateTabDisplayName(tabTitle);
             }
 
-            // Send to CLI \u2014 rich (with images) or plain text
+            // CLI gets the prefixed version with full file context
             if (imageDataList != null && !imageDataList.isEmpty()) {
-                cliManager.sendRichMessage(message, imageDataList);
+                cliManager.sendRichMessage(cliText, imageDataList);
             } else {
-                cliManager.sendMessage(message);
+                cliManager.sendMessage(cliText);
             }
         } catch (Exception e) {
             LOG.error("Error handling send_message from webview", e);
