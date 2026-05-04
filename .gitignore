@@ -14,3 +14,7 @@ build/
 .DS_Store
 Thumbs.db
 bin/
+
+# Only keep the latest plugin ZIP — older ones live as Release assets
+claude-intellij-plugin-*.zip
+!claude-intellij-plugin-202605040825.zip
