@@ -39,7 +39,25 @@ public class SkillsDialog extends DialogWrapper {
     private JTextArea skillInfoArea;
     private JTextArea skillMdArea;
     private JTextArea skillLicenseArea;
+    private JLabel skillsPathLabel;
     private final List<SkillInfo> loadedSkills = new ArrayList<>();
+
+    /** Default skills folder when the user hasn't configured one in Settings. Matches Claude CLI. */
+    private static Path defaultSkillsFolder() {
+        return Paths.get(System.getProperty("user.home"), ".claude", "skills");
+    }
+
+    /** Effective skills folder = settings override (when non-empty) or the default. */
+    private static Path effectiveSkillsFolder() {
+        try {
+            String configured = com.anthropic.claude.intellij.settings.ClaudeSettings
+                .getInstance().getState().skillsFolder;
+            if (configured != null && !configured.trim().isEmpty()) {
+                return Paths.get(configured.trim());
+            }
+        } catch (Exception ignored) {}
+        return defaultSkillsFolder();
+    }
 
     // Installed Plugins tab
     private JBTable pluginTable;
@@ -107,10 +125,12 @@ public class SkillsDialog extends DialogWrapper {
         skillsTable.getSelectionModel().addListSelectionListener(this::onSkillSelected);
 
         JPanel leftPanel = new JPanel(new BorderLayout(0, 6));
-        Path skillsDir = Paths.get(System.getProperty("user.home"), "skills", "skills");
-        JLabel pathLabel = new JLabel("Custom skills from ~" + "/skills/skills/");
-        pathLabel.setFont(pathLabel.getFont().deriveFont(Font.PLAIN, 11f));
-        leftPanel.add(pathLabel, BorderLayout.NORTH);
+
+        // Header label shows the current skills path verbatim (live-updates when changed via Browse).
+        skillsPathLabel = new JLabel();
+        skillsPathLabel.setFont(skillsPathLabel.getFont().deriveFont(Font.PLAIN, 11f));
+        updateSkillsPathLabel();
+        leftPanel.add(skillsPathLabel, BorderLayout.NORTH);
         leftPanel.add(new JBScrollPane(skillsTable), BorderLayout.CENTER);
 
         // Buttons
@@ -118,9 +138,13 @@ public class SkillsDialog extends DialogWrapper {
         JButton openFolderBtn = new JButton("Open Folder");
         openFolderBtn.setIcon(UIManager.getIcon("FileView.directoryIcon"));
         openFolderBtn.addActionListener(e -> openSkillFolder());
+        JButton browseBtn = new JButton("Browse...");
+        browseBtn.setToolTipText("Choose a different skills folder");
+        browseBtn.addActionListener(e -> browseSkillsFolder());
         JButton refreshBtn = new JButton("Refresh");
         refreshBtn.addActionListener(e -> loadSkills());
         btnRow.add(openFolderBtn);
+        btnRow.add(browseBtn);
         btnRow.add(refreshBtn);
         leftPanel.add(btnRow, BorderLayout.SOUTH);
 
@@ -146,20 +170,30 @@ public class SkillsDialog extends DialogWrapper {
     private void loadSkills() {
         loadedSkills.clear();
         skillsModel.setRowCount(0);
+        if (skillsPathLabel != null) updateSkillsPathLabel();
 
-        // Scan ~/skills/skills/ (same as Eclipse)
-        Path skillsDir = Paths.get(System.getProperty("user.home"), "skills", "skills");
-        scanSkillsDirectory(skillsDir);
+        Path primary = effectiveSkillsFolder();
+        scanSkillsDirectory(primary);
 
-        // Also scan ~/.claude/skills/
-        Path claudeSkillsDir = Paths.get(System.getProperty("user.home"), ".claude", "skills");
-        scanSkillsDirectory(claudeSkillsDir);
+        // Always also scan the Claude CLI default if the user picked something else,
+        // so existing skills aren't hidden after a custom path is set.
+        Path fallback = defaultSkillsFolder();
+        if (!primary.toAbsolutePath().equals(fallback.toAbsolutePath())) {
+            scanSkillsDirectory(fallback);
+        }
 
         if (loadedSkills.isEmpty()) {
-            skillInfoArea.setText("No local skills found.\n\nSkill directories scanned:\n  " +
-                skillsDir + "\n  " + claudeSkillsDir +
+            String fallbackLine = primary.toAbsolutePath().equals(fallback.toAbsolutePath())
+                ? "" : "\n  " + fallback;
+            skillInfoArea.setText("No local skills found.\n\nSkill directories scanned:\n  "
+                + primary + fallbackLine +
                 "\n\nPlace skill directories (containing SKILL.md) in one of the above locations.");
         }
+    }
+
+    private void updateSkillsPathLabel() {
+        if (skillsPathLabel == null) return;
+        skillsPathLabel.setText("Custom skills from " + effectiveSkillsFolder().toString());
     }
 
     private void scanSkillsDirectory(Path dir) {
@@ -276,13 +310,73 @@ public class SkillsDialog extends DialogWrapper {
         if (row >= 0 && row < loadedSkills.size()) {
             dir = loadedSkills.get(row).directory;
         } else {
-            dir = Paths.get(System.getProperty("user.home"), "skills", "skills");
+            dir = effectiveSkillsFolder();
         }
+
+        // Auto-create the folder so the action always has something to open.
+        try { Files.createDirectories(dir); } catch (IOException ignored) {}
+
+        if (openFolderCrossPlatform(dir)) return;
+
+        // Last resort: show the path so the user can copy it manually.
+        JOptionPane.showMessageDialog(getContentPanel(),
+            "Could not open folder automatically.\nPath:\n" + dir.toAbsolutePath(),
+            "Open Folder", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /**
+     * Opens a folder via a 3-tier fallback that works on Windows / macOS / Linux:
+     *   1) java.awt.Desktop.open() — preferred when supported
+     *   2) Windows-only: rundll32 url.dll,FileProtocolHandler &lt;path&gt; (always works)
+     *   3) Platform-specific commands (open / xdg-open / explorer)
+     * Returns true if any tier succeeded.
+     */
+    private static boolean openFolderCrossPlatform(Path dir) {
+        // Tier 1: Desktop API
         try {
-            Desktop.getDesktop().open(dir.toFile());
+            if (Desktop.isDesktopSupported()) {
+                Desktop d = Desktop.getDesktop();
+                if (d.isSupported(Desktop.Action.OPEN)) {
+                    d.open(dir.toFile());
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {}
+
+        String os = System.getProperty("os.name", "").toLowerCase();
+        try {
+            if (os.contains("win")) {
+                // Tier 2: rundll32 (always available on Windows)
+                new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler",
+                    dir.toAbsolutePath().toString()).start();
+                return true;
+            } else if (os.contains("mac")) {
+                new ProcessBuilder("open", dir.toAbsolutePath().toString()).start();
+                return true;
+            } else {
+                new ProcessBuilder("xdg-open", dir.toAbsolutePath().toString()).start();
+                return true;
+            }
         } catch (Exception e) {
-            LOG.warn("Failed to open folder: " + dir, e);
+            LOG.warn("Could not open folder " + dir, e);
+            return false;
         }
+    }
+
+    /** Lets the user pick a different skills folder; persists to settings + reloads. */
+    private void browseSkillsFolder() {
+        com.intellij.openapi.fileChooser.FileChooserDescriptor descr =
+            com.intellij.openapi.fileChooser.FileChooserDescriptorFactory.createSingleFolderDescriptor()
+                .withTitle("Select Skills Folder");
+        com.intellij.openapi.vfs.VirtualFile preselect =
+            com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(
+                effectiveSkillsFolder().toAbsolutePath().toString());
+        com.intellij.openapi.vfs.VirtualFile chosen =
+            com.intellij.openapi.fileChooser.FileChooser.chooseFile(descr, getContentPanel(), null, preselect);
+        if (chosen == null) return;
+        com.anthropic.claude.intellij.settings.ClaudeSettings.getInstance()
+            .getState().skillsFolder = chosen.getPath();
+        loadSkills(); // updates label + table
     }
 
     // ==================== Tab 2: Installed Plugins ====================

@@ -35,6 +35,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
     private JBCheckBox showStreamingCheckbox;
     private JBCheckBox autoSaveBeforeToolsCheckbox;
     private JBCheckBox diagnosticLoggingCheckbox;
+    private TextFieldWithBrowseButton skillsFolderField;
     private JSpinner maxTokensSpinner;
     private JTextField systemPromptField;
     private JSpinner sessionHistoryLimitSpinner;
@@ -57,6 +58,16 @@ public class ClaudeSettingsConfigurable implements Configurable {
         );
         // TextFieldWithBrowseButton uses JTextField (not JBTextField), so set tooltip instead
         cliPathField.getTextField().setToolTipText("Auto-detect (leave empty)");
+
+        // Skills folder picker — shown in the Skills & Plugins dialog
+        skillsFolderField = new TextFieldWithBrowseButton();
+        skillsFolderField.addBrowseFolderListener(
+                "Select Skills Folder",
+                "Folder scanned by the Skills & Plugins dialog (default: ~/.claude/skills/)",
+                null,
+                FileChooserDescriptorFactory.createSingleFolderDescriptor()
+        );
+        skillsFolderField.getTextField().setToolTipText("Default: ~/.claude/skills/ (leave empty)");
 
         // CLI status indicator
         cliStatusLabel = new JBLabel();
@@ -144,6 +155,8 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 .addComponent(showStreamingCheckbox)
                 .addComponent(autoSaveBeforeToolsCheckbox)
                 .addComponent(diagnosticLoggingCheckbox)
+                .addLabeledComponent("Skills folder:", skillsFolderField)
+                .addComponentToRightColumn(createDescriptionLabel("Folder scanned by Skills & Plugins. Leave empty for default ~/.claude/skills/."))
                 .addComponentFillVertically(new JPanel(), 0)
                 .getPanel();
 
@@ -207,6 +220,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 || showStreamingCheckbox.isSelected() != state.showStreaming
                 || autoSaveBeforeToolsCheckbox.isSelected() != state.autoSaveBeforeTools
                 || diagnosticLoggingCheckbox.isSelected() != state.diagnosticLogging
+                || !skillsFolderField.getText().trim().equals(state.skillsFolder == null ? "" : state.skillsFolder)
                 || ((Integer) maxTokensSpinner.getValue()) != state.maxTokens
                 || !systemPromptField.getText().trim().equals(state.systemPrompt)
                 || ((Integer) sessionHistoryLimitSpinner.getValue()) != state.sessionHistoryLimit
@@ -232,6 +246,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         // Apply DIAG flag immediately so toggling takes effect without restart
         com.anthropic.claude.intellij.service.ClaudeApplicationService.DIAG_ENABLED =
             state.diagnosticLogging || Boolean.getBoolean("claude.diag");
+        state.skillsFolder = skillsFolderField.getText().trim();
         state.maxTokens = (Integer) maxTokensSpinner.getValue();
         state.systemPrompt = systemPromptField.getText().trim();
         state.sessionHistoryLimit = (Integer) sessionHistoryLimitSpinner.getValue();
@@ -261,6 +276,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         showStreamingCheckbox.setSelected(state.showStreaming);
         autoSaveBeforeToolsCheckbox.setSelected(state.autoSaveBeforeTools);
         diagnosticLoggingCheckbox.setSelected(state.diagnosticLogging);
+        skillsFolderField.setText(state.skillsFolder == null ? "" : state.skillsFolder);
         maxTokensSpinner.setValue(state.maxTokens);
         systemPromptField.setText(state.systemPrompt);
         sessionHistoryLimitSpinner.setValue(state.sessionHistoryLimit);
@@ -289,6 +305,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         showStreamingCheckbox = null;
         autoSaveBeforeToolsCheckbox = null;
         diagnosticLoggingCheckbox = null;
+        skillsFolderField = null;
         maxTokensSpinner = null;
         systemPromptField = null;
         sessionHistoryLimitSpinner = null;

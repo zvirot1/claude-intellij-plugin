@@ -46,6 +46,12 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
          */
         public boolean attachActiveFile = false;
 
+        /**
+         * Directory scanned by the Skills & Plugins dialog for local skills.
+         * Default mirrors the Claude CLI convention. Empty = fall back to the default.
+         */
+        public String skillsFolder = "";
+
         /** Whether to auto-save files after Claude edits them. */
         public boolean autosave = true;
 
