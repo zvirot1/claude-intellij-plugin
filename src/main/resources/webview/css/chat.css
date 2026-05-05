@@ -1187,6 +1187,37 @@ html, body {
     font-style: italic;
 }
 
+/* ==================== Message Completion Footer ==================== */
+
+/* Subtle "✓ tokens · duration · cost" line that appears under the final
+ * assistant bubble when the response is fully done — gives an unambiguous
+ * visual completion cue (the status-bar update alone was too easy to miss). */
+.message-completion-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0 0 4px;
+    padding: 2px 0;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    opacity: 0;
+    animation: claude-completion-fade-in 250ms ease-out forwards;
+}
+
+.message-completion-check {
+    color: var(--text-success);
+    font-weight: 600;
+}
+
+.message-completion-text {
+    opacity: 0.85;
+}
+
+@keyframes claude-completion-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ==================== Streaming Cursor ==================== */
 
 .streaming-cursor::after {

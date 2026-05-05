@@ -926,6 +926,10 @@
         // handleResultReceived(); this just keeps the button accurate
         // *during* tool execution.
         if (!hasRunningToolCalls()) {
+            // Remember the actual final assistant bubble (not a loading /
+            // thinking placeholder). handleResultReceived will append the
+            // completion footer here.
+            state.lastFinalAssistantEl = state.currentAssistantEl;
             setStreamingState(false);
         }
         scrollToBottom();
@@ -958,6 +962,37 @@
             statusCost.textContent = data.formattedCost;
             statusCost.classList.remove('hidden');
         }
+
+        // Append a clear "done" footer to the last assistant bubble so the user
+        // has an obvious indication that the response is finished — the
+        // status-bar update alone was too subtle.
+        appendCompletionFooter(data);
+    }
+
+    /** Adds a small "✓ tokens · duration · cost" footer below the final
+     *  assistant message. Idempotent — replaces any prior footer on that bubble. */
+    function appendCompletionFooter(data) {
+        var target = state.lastFinalAssistantEl;
+        if (!target) return;
+
+        // Remove any earlier footer (defensive, in case result fires twice).
+        var prev = target.querySelector(':scope > .message-completion-footer');
+        if (prev) prev.parentNode.removeChild(prev);
+
+        var parts = [];
+        if (data.formattedTokens)   parts.push(data.formattedTokens);
+        if (data.formattedDuration) parts.push(data.formattedDuration);
+        if (data.formattedCost)     parts.push(data.formattedCost);
+
+        var footer = document.createElement('div');
+        footer.className = 'message-completion-footer';
+        footer.innerHTML =
+            '<span class="message-completion-check">✓</span>' +
+            '<span class="message-completion-text">' +
+                (parts.length > 0 ? parts.join(' · ') : 'Done') +
+            '</span>';
+        target.appendChild(footer);
+        state.lastFinalAssistantEl = null; // consume so the next turn's footer is fresh
     }
 
     function handlePermissionRequested(data) {
