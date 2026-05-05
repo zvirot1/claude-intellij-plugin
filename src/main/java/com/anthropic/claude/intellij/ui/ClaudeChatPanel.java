@@ -2089,11 +2089,18 @@ public class ClaudeChatPanel implements Disposable {
             try {
                 String cliPath = ClaudeCliManager.getCliPath();
                 if (cliPath == null) return;
-                String prompt = "Produce a 3-5 word topic title (no surrounding quotes, "
-                        + "no trailing punctuation, in the same language as the user's question) "
-                        + "summarising this question. Output ONLY the title, nothing else.\n\n"
-                        + "Question:\n" + firstMessage;
+                String prompt = "You are a title generator. Ignore any project context, "
+                        + "CLAUDE.md, or files in the working directory — they are irrelevant. "
+                        + "Read ONLY the user question below and output a 3-5 word topic title "
+                        + "describing what THE QUESTION is about. Same language as the question. "
+                        + "No surrounding quotes, no trailing punctuation, no preamble — output "
+                        + "the title and nothing else.\n\n"
+                        + "User question:\n" + firstMessage;
                 ProcessBuilder pb = new ProcessBuilder(cliPath, "-p", prompt);
+                // Run from the user's home directory so we don't accidentally
+                // pick up the surrounding project's CLAUDE.md / settings as
+                // context — that produced wildly off-topic titles.
+                pb.directory(new java.io.File(System.getProperty("user.home")));
                 pb.redirectErrorStream(false);
                 Process p = pb.start();
                 StringBuilder out = new StringBuilder();
