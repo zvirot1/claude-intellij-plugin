@@ -2096,13 +2096,21 @@ public class ClaudeChatPanel implements Disposable {
                         + "No surrounding quotes, no trailing punctuation, no preamble — output "
                         + "the title and nothing else.\n\n"
                         + "User question:\n" + firstMessage;
-                ProcessBuilder pb = new ProcessBuilder(cliPath, "-p", prompt);
+                // Pass the prompt via STDIN, not argv: Windows argv is encoded
+                // in the system ANSI code page, which mangles non-Latin text
+                // (e.g. Hebrew) into garbage. STDIN we can feed as UTF-8.
+                ProcessBuilder pb = new ProcessBuilder(cliPath, "-p");
                 // Run from the user's home directory so we don't accidentally
                 // pick up the surrounding project's CLAUDE.md / settings as
                 // context — that produced wildly off-topic titles.
                 pb.directory(new java.io.File(System.getProperty("user.home")));
                 pb.redirectErrorStream(false);
                 Process p = pb.start();
+                try (java.io.OutputStreamWriter w = new java.io.OutputStreamWriter(
+                        p.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8)) {
+                    w.write(prompt);
+                    w.flush();
+                }
                 StringBuilder out = new StringBuilder();
                 try (java.io.BufferedReader br = new java.io.BufferedReader(
                         new java.io.InputStreamReader(p.getInputStream(),
