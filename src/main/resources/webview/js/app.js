@@ -353,9 +353,10 @@
             });
         }
 
-        // Reconnect button
+        // Reconnect button — restart the CLI process for the *current* session.
+        // (Don't conflate this with "+" / new_session, which clears the chat.)
         reconnectBtn.addEventListener('click', function () {
-            bridge.sendToJava('new_session', {});
+            bridge.sendToJava('reconnect', {});
         });
 
         // Scroll to bottom button

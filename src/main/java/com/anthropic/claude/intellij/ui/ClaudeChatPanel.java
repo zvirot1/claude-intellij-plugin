@@ -544,6 +544,9 @@ public class ClaudeChatPanel implements Disposable {
             case "new_session":
                 handleNewSession();
                 break;
+            case "reconnect":
+                handleReconnect();
+                break;
             case "accept_permission":
                 handlePermissionResponse(payload, true);
                 break;
@@ -1540,6 +1543,11 @@ public class ClaudeChatPanel implements Disposable {
                             }
                             text = sb.toString();
                         }
+                        // Strip the file-context prefix (active-file pin / @-mention)
+                        // that handleSendMessage prepends to cliText. The JSONL stores
+                        // exactly what the CLI received, so on replay we'd otherwise
+                        // see <file path="…">…full body…</file> as raw text in the bubble.
+                        text = stripPrependedFileBlocks(text);
                         if (text != null && !text.trim().isEmpty()) {
                             MessageBlock block = new MessageBlock(MessageBlock.Role.USER);
                             MessageBlock.TextSegment seg = new MessageBlock.TextSegment();
@@ -1766,6 +1774,64 @@ public class ClaudeChatPanel implements Disposable {
         stagedEditDone.clear();
         tabNameSet = false;
         startCli();
+    }
+
+    /**
+     * "Reconnect" — restart the CLI process for the CURRENT session, without
+     * touching the conversation. Resumes the same session-id with --resume so
+     * the conversation continues where it left off, instead of wiping the chat
+     * (which is what the old behaviour did when this button delegated to
+     * handleNewSession).
+     */
+    private void handleReconnect() {
+        if (cliManager.isRunning()) {
+            // Already connected — nothing to do. The button is hidden in this state
+            // anyway, but guard just in case the click races with state updates.
+            return;
+        }
+
+        SessionInfo info = conversationModel.getSessionInfo();
+        String sessionId = (info != null) ? info.getSessionId() : null;
+
+        String projectPath = project.getBasePath();
+        if (projectPath == null) projectPath = System.getProperty("user.home");
+        String cliPath = ClaudeCliManager.getCliPath();
+        if (cliPath == null) {
+            sendToWebview("error",
+                "{\"message\":" + jsonString("Claude CLI not found.") + "}");
+            return;
+        }
+
+        ClaudeSettings settingsInstance = ClaudeSettings.getInstance();
+        if (settingsInstance == null) return;
+        ClaudeSettings.State settings = settingsInstance.getState();
+
+        CliProcessConfig.Builder builder = new CliProcessConfig.Builder(cliPath, projectPath);
+        if (settings.selectedModel != null && !settings.selectedModel.isEmpty()
+                && !"default".equals(settings.selectedModel)) {
+            builder.model(settings.selectedModel);
+        }
+        if (settings.initialPermissionMode != null && !settings.initialPermissionMode.isEmpty()
+                && !"default".equals(settings.initialPermissionMode)) {
+            builder.permissionMode(settings.initialPermissionMode);
+        }
+        if (currentEffort != null && !currentEffort.isEmpty()) {
+            builder.effort(currentEffort);
+        }
+        if (sessionId != null && !sessionId.isEmpty()) {
+            builder.resumeSessionId(sessionId);
+        }
+
+        try {
+            cliManager.start(builder.build());
+        } catch (java.io.IOException e) {
+            LOG.warn("Reconnect failed", e);
+            sendToWebview("error",
+                "{\"message\":" + jsonString("Failed to reconnect: " + e.getMessage()) + "}");
+        }
+        // Intentionally NOT calling conversationModel.clear() or
+        // loadLastSessionHistoryFromDisk() — the bubbles are still on screen
+        // and replaying would re-trigger the file-XML display bug.
     }
 
     /**
@@ -2551,6 +2617,20 @@ public class ClaudeChatPanel implements Disposable {
         json.append(",\"formattedDuration\":").append(jsonString(usage.formatDuration()));
         json.append("}");
         return json.toString();
+    }
+
+    /**
+     * Strips any leading {@code <file path="…">…</file>} blocks that
+     * {@link #handleSendMessage(String)} prepended to the CLI text — so when
+     * we replay user messages from JSONL on resume, the bubble shows only
+     * what the user typed (not the entire file body that Claude saw).
+     * Idempotent on already-clean text.
+     */
+    private static String stripPrependedFileBlocks(String s) {
+        if (s == null || s.isEmpty()) return s;
+        // (?is) = case-insensitive + dotall (so .*? spans newlines)
+        // Matches one or more leading <file …>…</file> blocks plus surrounding whitespace.
+        return s.replaceAll("(?is)^(?:\\s*<file\\s+path=\"[^\"]*\"\\s*>.*?</file>\\s*)+", "");
     }
 
     /**
