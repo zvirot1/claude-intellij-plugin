@@ -747,7 +747,10 @@
     function handleAssistantMessageStarted(data) {
         hideWelcome();
         removeThinkingIndicator();
-        removeLoadingIndicator();
+        // Keep the "Thinking..." indicator visible until the first text
+        // chunk actually arrives — message_started fires before the model
+        // has produced any visible content, so removing it here would
+        // blink the affordance away too soon.
         setStreamingState(true);
 
         var el = document.createElement('div');
@@ -789,6 +792,9 @@
     function handleStreamingTextAppended(data) {
         if (!state.currentContentEl) return;
 
+        // First text chunk arrived — drop the "Thinking..." indicator.
+        if (state.loadingEl) removeLoadingIndicator();
+
         state.streamingTextBuffer += data.delta;
         renderMarkdown(state.currentContentEl, state.streamingTextBuffer);
         scrollToBottom();
@@ -796,6 +802,8 @@
 
     function handleToolCallStarted(data) {
         console.log('[TOOL_STARTED] toolId=' + data.toolId + ' toolName=' + data.toolName);
+        // First real activity (tool call before any text) — drop the indicator.
+        if (state.loadingEl) removeLoadingIndicator();
         if (!state.currentAssistantEl) return;
 
         // Flush any buffered text into the content element before the tool call
@@ -2039,10 +2047,15 @@
         state.loadingEl = document.createElement('div');
         state.loadingEl.className = 'message message-assistant';
 
+        // Reuse the extended-thinking dots animation so the "while we wait
+        // for the first chunk" period has the same visual language as the
+        // explicit thinking phase. More noticeable than the small spinner
+        // and the wording matches what users expect from chat AI UIs.
         var indicator = document.createElement('div');
-        indicator.className = 'loading-indicator';
-        indicator.innerHTML = '<div class="loading-spinner"></div>' +
-            '<span>Waiting for response...</span>';
+        indicator.className = 'thinking-indicator';
+        indicator.innerHTML =
+            '<div class="thinking-dots"><span></span><span></span><span></span></div>' +
+            '<span class="thinking-text">Thinking...</span>';
 
         state.loadingEl.appendChild(indicator);
         messagesContainer.appendChild(state.loadingEl);
