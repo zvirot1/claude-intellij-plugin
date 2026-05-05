@@ -2650,17 +2650,23 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     /**
-     * Strips any leading {@code <file path="…">…</file>} blocks that
-     * {@link #handleSendMessage(String)} prepended to the CLI text — so when
-     * we replay user messages from JSONL on resume, the bubble shows only
-     * what the user typed (not the entire file body that Claude saw).
+     * Strips noise prefixes that the plugin or the CLI prepends to user
+     * messages, so when we replay history from JSONL the bubble shows only
+     * what the user actually typed:
+     * <ul>
+     *   <li>{@code <file path="…">…</file>} XML blocks added by
+     *       {@link #handleSendMessage(String)} (active-file pin, @-mentions)</li>
+     *   <li>{@code [Active editor context: …]} blocks added by the CLI when
+     *       an IDE editor is in focus.</li>
+     * </ul>
      * Idempotent on already-clean text.
      */
     private static String stripPrependedFileBlocks(String s) {
         if (s == null || s.isEmpty()) return s;
         // (?is) = case-insensitive + dotall (so .*? spans newlines)
-        // Matches one or more leading <file …>…</file> blocks plus surrounding whitespace.
-        return s.replaceAll("(?is)^(?:\\s*<file\\s+path=\"[^\"]*\"\\s*>.*?</file>\\s*)+", "");
+        s = s.replaceAll("(?is)^(?:\\s*<file\\s+path=\"[^\"]*\"\\s*>.*?</file>\\s*)+", "");
+        s = s.replaceAll("(?is)^\\s*\\[Active editor context:[^\\]]*\\]\\s*", "");
+        return s;
     }
 
     /**

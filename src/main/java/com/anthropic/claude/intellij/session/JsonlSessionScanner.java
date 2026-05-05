@@ -114,12 +114,12 @@ public class JsonlSessionScanner {
                             } catch (Exception ignored) {}
                         }
                     }
-                    // First user message → summary
+                    // First user message → summary (cleaned of noise prefixes)
                     if (summary == null && "user".equals(type)) {
                         Map<String, Object> msg = JsonParser.getMap(obj, "message");
                         if (msg != null) {
                             Object content = msg.get("content");
-                            String text = extractUserText(content);
+                            String text = cleanForSummary(extractUserText(content));
                             if (text != null && !text.isEmpty()) {
                                 summary = text.length() > 60 ? text.substring(0, 57) + "..." : text;
                             }
@@ -150,6 +150,27 @@ public class JsonlSessionScanner {
         info.setModel(model);
         if (createdAt > 0) info.setStartTime(createdAt);
         return info;
+    }
+
+    /**
+     * Cleans noise off the start of a user message before it becomes a
+     * Session History summary. Two prefixes are stripped:
+     * <ul>
+     *   <li>{@code <file path="…">…</file>} XML blocks the plugin prepends
+     *       to the CLI text (active-file pin, @-mentions).</li>
+     *   <li>{@code [Active editor context: …]} blocks the Claude CLI itself
+     *       sometimes prepends to user messages when an IDE editor context
+     *       is present.</li>
+     * </ul>
+     * Idempotent on already-clean text. Returns the trimmed remainder.
+     */
+    public static String cleanForSummary(String s) {
+        if (s == null || s.isEmpty()) return s;
+        // Strip leading <file …>…</file> blocks (one or more, with optional whitespace).
+        s = s.replaceAll("(?is)^(?:\\s*<file\\s+path=\"[^\"]*\"\\s*>.*?</file>\\s*)+", "");
+        // Strip leading [Active editor context: …] block from the CLI.
+        s = s.replaceAll("(?is)^\\s*\\[Active editor context:[^\\]]*\\]\\s*", "");
+        return s.trim();
     }
 
     @SuppressWarnings("unchecked")

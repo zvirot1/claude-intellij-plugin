@@ -130,11 +130,13 @@ public class ClaudeSessionManager {
         currentSession.setMessageCount(model.getMessageCount());
         currentSession.touch();
 
-        // Generate summary from first user message
+        // Generate summary from first user message (cleaned of file-XML and
+        // [Active editor context] prefixes — see JsonlSessionScanner#cleanForSummary)
         if (currentSession.getSummary() == null && !model.getMessages().isEmpty()) {
             for (MessageBlock msg : model.getMessages()) {
                 if (msg.getRole() == MessageBlock.Role.USER) {
-                    String text = msg.getFullText();
+                    String text = JsonlSessionScanner.cleanForSummary(msg.getFullText());
+                    if (text == null || text.isEmpty()) continue;
                     if (text.length() > 60) {
                         text = text.substring(0, 57) + "...";
                     }
