@@ -1243,6 +1243,18 @@ html, body {
     box-shadow: 0 0 4px rgba(115, 201, 145, 0.4);
 }
 
+/* Connecting — gentle pulsing yellow dot while the CLI process is starting up. */
+.status-indicator.connecting .status-dot {
+    background: var(--text-warning);
+    box-shadow: 0 0 4px rgba(226, 192, 141, 0.45);
+    animation: claude-status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes claude-status-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+}
+
 .status-indicator.disconnected .status-dot {
     background: var(--text-muted);
 }

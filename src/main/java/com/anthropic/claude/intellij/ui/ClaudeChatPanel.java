@@ -2335,6 +2335,16 @@ public class ClaudeChatPanel implements Disposable {
             historyLoadedFromDisk = true;
             loadLastSessionHistoryFromDisk();
         }
+
+        // Eagerly start the CLI so a freshly opened tab is "Connected" out of the
+        // box instead of staring at "Disconnected + Reconnect" until the first
+        // message. We send a synthetic 'connecting' state immediately so the UI
+        // can flip the pill and hide the Reconnect button while the process spins
+        // up; cliManager will fire the real 'connected' state on session_init.
+        if (!cliManager.isRunning()) {
+            sendToWebview("cli_state_changed", "{\"state\":\"connecting\"}");
+            startCli();
+        }
     }
 
     /**

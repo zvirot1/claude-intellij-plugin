@@ -699,6 +699,12 @@
         connectionStatus.className = 'status-indicator ' + data.state;
 
         switch (data.state) {
+            case 'connecting':
+                // Synthetic state Java fires while the CLI process is starting.
+                // Hide Reconnect (no error to recover from yet) and show progress.
+                statusText.textContent = 'Connecting…';
+                reconnectBtn.classList.add('hidden');
+                break;
             case 'connected':
                 statusText.textContent = 'Connected';
                 reconnectBtn.classList.add('hidden');
