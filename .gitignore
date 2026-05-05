@@ -17,4 +17,4 @@ bin/
 
 # Only keep the latest plugin ZIP — older ones live as Release assets
 claude-intellij-plugin-*.zip
-!claude-intellij-plugin-202605051523.zip
+!claude-intellij-plugin-202605051535.zip

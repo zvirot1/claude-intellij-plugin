@@ -1494,12 +1494,36 @@ public class ClaudeChatPanel implements Disposable {
             // also resumes this session and not the previous one.
             updateContentSessionId(sessionId);
 
-            // Reset per-tab transient state (tab title will re-derive from
-            // the loaded history; pending edits from prev session are gone).
-            tabNameSet = false;
+            // Reset per-tab transient state. NOTE: we do NOT reset
+            // tabNameSet here — the tab title is derived below from the
+            // resumed session's stored summary (or first user message),
+            // and we mark tabNameSet=true so the next handleSendMessage
+            // does not trigger the self_generated title strategy and
+            // overwrite it with a generic "topic" of the latest message.
             resumeSessionId = sessionId;
             eagerSnapshotDone.clear();
             stagedEditDone.clear();
+
+            // Derive the tab title from the resumed session's stored summary
+            // (CLI's auto-summary if present, else first user message). This
+            // mirrors what Session History shows in the dialog.
+            try {
+                java.util.List<SessionInfo> all =
+                        (sessionManager != null) ? sessionManager.listSessions() : null;
+                if (all != null) {
+                    for (SessionInfo s : all) {
+                        if (sessionId.equals(s.getSessionId())) {
+                            String sum = s.getSummary();
+                            if (sum != null && !sum.isEmpty()) {
+                                String title = sum.length() > 50 ? sum.substring(0, 50) + "…" : sum;
+                                updateTabDisplayName(title);
+                            }
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+            tabNameSet = true;
 
             String projectPath = project.getBasePath();
             if (projectPath == null) {
