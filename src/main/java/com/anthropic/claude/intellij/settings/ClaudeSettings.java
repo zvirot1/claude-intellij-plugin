@@ -81,6 +81,21 @@ public final class ClaudeSettings implements PersistentStateComponent<ClaudeSett
 
         /** User-added custom model names, comma-separated. Persisted across sessions. */
         public String customModels = "";
+
+        /**
+         * How tab titles are generated for new sessions:
+         * <ul>
+         *   <li>{@code "first_message"} — truncated first user message (no LLM).</li>
+         *   <li>{@code "cli_summary"} — wait for the CLI to write a summary entry
+         *       in the JSONL (only happens after several turns).</li>
+         *   <li>{@code "self_generated"} — spawn a one-shot {@code claude -p}
+         *       call after the first message to produce a 3-5 word topic title.
+         *       <b>Default.</b></li>
+         *   <li>{@code "hybrid"} — self_generated immediately, then upgrade
+         *       to cli_summary if/when the CLI writes one.</li>
+         * </ul>
+         */
+        public String tabTitleStrategy = "self_generated";
     }
 
     private State myState = new State();

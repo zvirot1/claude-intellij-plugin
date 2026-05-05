@@ -39,6 +39,33 @@ public class ClaudeSettingsConfigurable implements Configurable {
     private JSpinner maxTokensSpinner;
     private JTextField systemPromptField;
     private JSpinner sessionHistoryLimitSpinner;
+    private JComboBox<String> tabTitleStrategyCombo;
+
+    /** User-facing labels for the four tab-title strategies, in display order. */
+    private static final String[] TAB_TITLE_LABELS = {
+            "Self-generated topic (recommended)",
+            "First message (no LLM call)",
+            "CLI auto-summary (free, kicks in after several turns)",
+            "Hybrid: self-generated, upgrade to CLI summary later"
+    };
+    /** Internal keys persisted in settings, in the same order as {@link #TAB_TITLE_LABELS}. */
+    private static final String[] TAB_TITLE_KEYS = {
+            "self_generated", "first_message", "cli_summary", "hybrid"
+    };
+
+    private static String tabTitleKeyFromLabel(String label) {
+        for (int i = 0; i < TAB_TITLE_LABELS.length; i++) {
+            if (TAB_TITLE_LABELS[i].equals(label)) return TAB_TITLE_KEYS[i];
+        }
+        return "self_generated";
+    }
+    private static String tabTitleLabelFromKey(String key) {
+        if (key == null) return TAB_TITLE_LABELS[0];
+        for (int i = 0; i < TAB_TITLE_KEYS.length; i++) {
+            if (TAB_TITLE_KEYS[i].equals(key)) return TAB_TITLE_LABELS[i];
+        }
+        return TAB_TITLE_LABELS[0];
+    }
 
     @Nls(capitalization = Nls.Capitalization.Title)
     @Override
@@ -121,6 +148,9 @@ public class ClaudeSettingsConfigurable implements Configurable {
         sessionHistoryLimitSpinner = new JSpinner(new SpinnerNumberModel(100, 10, 10000, 10));
         ((JSpinner.DefaultEditor) sessionHistoryLimitSpinner.getEditor()).getTextField().setColumns(6);
 
+        // Tab title strategy
+        tabTitleStrategyCombo = new JComboBox<>(TAB_TITLE_LABELS);
+
         // Description labels
         JBLabel cliDesc = createDescriptionLabel("Path to the 'claude' CLI binary. Leave empty to auto-detect.");
         JBLabel modelDesc = createDescriptionLabel("Model for new conversations. You can also type a custom model name.");
@@ -147,6 +177,8 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 .addComponentToRightColumn(createDescriptionLabel("Custom prompt appended to the default system prompt."))
                 .addLabeledComponent("Session History Limit:", sessionHistoryLimitSpinner)
                 .addComponentToRightColumn(createDescriptionLabel("Maximum sessions to keep in history."))
+                .addLabeledComponent("Tab Title Strategy:", tabTitleStrategyCombo)
+                .addComponentToRightColumn(createDescriptionLabel("How new tabs get their title. Self-generated runs a small claude -p call once per new tab to produce a topic title."))
                 .addSeparator()
                 .addComponent(autosaveCheckbox)
                 .addComponent(ctrlEnterCheckbox)
@@ -224,6 +256,8 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 || ((Integer) maxTokensSpinner.getValue()) != state.maxTokens
                 || !systemPromptField.getText().trim().equals(state.systemPrompt)
                 || ((Integer) sessionHistoryLimitSpinner.getValue()) != state.sessionHistoryLimit
+                || !tabTitleKeyFromLabel(getSelectedItem(tabTitleStrategyCombo)).equals(
+                        state.tabTitleStrategy == null ? "self_generated" : state.tabTitleStrategy)
                 || apiKeyModified;
     }
 
@@ -250,6 +284,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         state.maxTokens = (Integer) maxTokensSpinner.getValue();
         state.systemPrompt = systemPromptField.getText().trim();
         state.sessionHistoryLimit = (Integer) sessionHistoryLimitSpinner.getValue();
+        state.tabTitleStrategy = tabTitleKeyFromLabel(getSelectedItem(tabTitleStrategyCombo));
 
         // Save API key securely
         String apiKey = new String(apiKeyField.getPassword()).trim();
@@ -280,6 +315,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         maxTokensSpinner.setValue(state.maxTokens);
         systemPromptField.setText(state.systemPrompt);
         sessionHistoryLimitSpinner.setValue(state.sessionHistoryLimit);
+        tabTitleStrategyCombo.setSelectedItem(tabTitleLabelFromKey(state.tabTitleStrategy));
 
         // Show masked indicator if API key exists (don't load the actual key)
         if (SecureApiKeyStore.hasApiKey()) {
@@ -309,6 +345,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
         maxTokensSpinner = null;
         systemPromptField = null;
         sessionHistoryLimitSpinner = null;
+        tabTitleStrategyCombo = null;
     }
 
     /** Built-in model names that should NOT be persisted as custom models. */

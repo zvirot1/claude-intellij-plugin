@@ -828,12 +828,21 @@ public class ClaudeChatPanel implements Disposable {
                 }
             } catch (Exception ignored) {}
 
-            // Set tab name from first user message (use the clean displayed text)
+            // Set tab name from first user message (immediate fallback) and,
+            // depending on the user's tab-title strategy, kick off async upgrades.
             if (!tabNameSet) {
                 tabNameSet = true;
                 String tabTitle = displayText.trim();
                 if (tabTitle.length() > 30) tabTitle = tabTitle.substring(0, 30) + "\u2026";
                 updateTabDisplayName(tabTitle);
+
+                String strategy = getTabTitleStrategy();
+                if ("self_generated".equals(strategy) || "hybrid".equals(strategy)) {
+                    kickoffSelfGeneratedTitle(displayText);
+                }
+                if ("cli_summary".equals(strategy) || "hybrid".equals(strategy)) {
+                    kickoffCliSummaryWatcher();
+                }
             }
 
             // CLI gets the prefixed version with full file context
@@ -2053,6 +2062,151 @@ public class ClaudeChatPanel implements Disposable {
                 projectDir.refresh(true, true);
             }
         });
+    }
+
+    /** Returns the user-configured tab-title strategy, defaulting to {@code self_generated}. */
+    private static String getTabTitleStrategy() {
+        try {
+            ClaudeSettings.State s = ClaudeSettings.getInstance().getState();
+            if (s == null || s.tabTitleStrategy == null || s.tabTitleStrategy.isEmpty()) {
+                return "self_generated";
+            }
+            return s.tabTitleStrategy;
+        } catch (Exception e) {
+            return "self_generated";
+        }
+    }
+
+    /**
+     * Spawns a one-shot {@code claude -p} call to generate a 3-5 word topic
+     * title for the new tab. Runs on a daemon thread; on success, updates the
+     * tab display name and persists the title as the session summary so it
+     * survives restarts.
+     */
+    private void kickoffSelfGeneratedTitle(final String firstMessage) {
+        if (firstMessage == null || firstMessage.trim().isEmpty()) return;
+        Thread t = new Thread(() -> {
+            try {
+                String cliPath = ClaudeCliManager.getCliPath();
+                if (cliPath == null) return;
+                String prompt = "Produce a 3-5 word topic title (no surrounding quotes, "
+                        + "no trailing punctuation, in the same language as the user's question) "
+                        + "summarising this question. Output ONLY the title, nothing else.\n\n"
+                        + "Question:\n" + firstMessage;
+                ProcessBuilder pb = new ProcessBuilder(cliPath, "-p", prompt);
+                pb.redirectErrorStream(false);
+                Process p = pb.start();
+                StringBuilder out = new StringBuilder();
+                try (java.io.BufferedReader br = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream(),
+                                java.nio.charset.StandardCharsets.UTF_8))) {
+                    String l;
+                    while ((l = br.readLine()) != null) out.append(l).append('\n');
+                }
+                if (!p.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    return;
+                }
+                if (p.exitValue() != 0) return;
+                String title = out.toString().trim();
+                // Strip surrounding quotes (straight or curly) the model sometimes adds.
+                title = title.replaceAll("^[\"'\\u201C\\u201D\\u2018\\u2019]+", "")
+                             .replaceAll("[\"'\\u201C\\u201D\\u2018\\u2019\\.\\!\\?]+$", "")
+                             .trim();
+                // Take only the first line in case the model added more.
+                int nl = title.indexOf('\n');
+                if (nl >= 0) title = title.substring(0, nl).trim();
+                if (title.isEmpty()) return;
+                if (title.length() > 50) title = title.substring(0, 50) + "…";
+                final String finalTitle = title;
+                com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                    updateTabDisplayName(finalTitle);
+                    if (sessionManager != null) {
+                        SessionInfo current = sessionManager.getCurrentSession();
+                        if (current != null) {
+                            current.setSummary(finalTitle);
+                            if (conversationModel != null) {
+                                sessionManager.saveCurrentSession(conversationModel);
+                            }
+                        }
+                    }
+                });
+            } catch (Exception ignored) {}
+        }, "Claude-Title-Gen");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * Polls the current session's JSONL transcript every 30 seconds for up to
+     * 5 minutes, looking for a {@code {"type":"summary",...}} entry. When found,
+     * updates the tab title. The CLI only writes such entries once a
+     * conversation has accumulated enough turns, so this is best-effort.
+     */
+    private void kickoffCliSummaryWatcher() {
+        Thread t = new Thread(() -> {
+            try {
+                long deadline = System.currentTimeMillis() + 5 * 60_000L;
+                String lastSeen = null;
+                while (System.currentTimeMillis() < deadline) {
+                    Thread.sleep(30_000L);
+                    SessionInfo info = (sessionManager != null) ? sessionManager.getCurrentSession() : null;
+                    if (info == null || info.getSessionId() == null) continue;
+                    String summary = readLatestCliSummary(info.getSessionId());
+                    if (summary == null || summary.isEmpty() || summary.equals(lastSeen)) continue;
+                    lastSeen = summary;
+                    String title = summary.length() > 50 ? summary.substring(0, 50) + "…" : summary;
+                    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(
+                            () -> updateTabDisplayName(title));
+                    return; // first match wins
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (Exception ignored) {}
+        }, "Claude-CliSummary-Watch");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * Scans {@code ~/.claude/projects/&lt;encoded-cwd&gt;/&lt;sessionId&gt;.jsonl}
+     * for the most recent {@code {"type":"summary",...}} entry. Returns null
+     * if the file is missing or no summary has been written yet.
+     */
+    private static String readLatestCliSummary(String sessionId) {
+        try {
+            java.io.File root = new java.io.File(System.getProperty("user.home")
+                    + java.io.File.separator + ".claude" + java.io.File.separator + "projects");
+            if (!root.isDirectory()) return null;
+            java.io.File[] dirs = root.listFiles(java.io.File::isDirectory);
+            if (dirs == null) return null;
+            String last = null;
+            for (java.io.File d : dirs) {
+                java.io.File f = new java.io.File(d, sessionId + ".jsonl");
+                if (!f.isFile()) continue;
+                try (java.io.BufferedReader br = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(new java.io.FileInputStream(f),
+                                java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if (line.isEmpty() || !line.contains("\"type\":\"summary\"")) continue;
+                        try {
+                            java.util.Map<String, Object> obj =
+                                    com.anthropic.claude.intellij.util.JsonParser.parseObject(line);
+                            String type = com.anthropic.claude.intellij.util.JsonParser.getString(obj, "type");
+                            if ("summary".equals(type)) {
+                                String s = com.anthropic.claude.intellij.util.JsonParser.getString(obj, "summary");
+                                if (s != null && !s.isEmpty()) last = s;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+                if (last != null) return last;
+            }
+            return last;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void updateTabDisplayName(String title) {
