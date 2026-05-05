@@ -917,8 +917,23 @@
         // Create a new content element for text after tool calls, if needed
         state.currentAssistantEl = null;
         state.currentContentEl = null;
-        setStreamingState(false);
+
+        // Only flip the Send/Stop button back to Send if no tool is still
+        // running. When the assistant message stops with stop_reason="tool_use",
+        // a tool is mid-execution and the model will continue once the tool
+        // result comes back — Stop should stay visible the whole time.
+        // The result message will eventually arrive and force-finish via
+        // handleResultReceived(); this just keeps the button accurate
+        // *during* tool execution.
+        if (!hasRunningToolCalls()) {
+            setStreamingState(false);
+        }
         scrollToBottom();
+    }
+
+    /** True if any rendered tool-call widget is still in the 'running' state. */
+    function hasRunningToolCalls() {
+        return document.querySelectorAll('.tool-call.running').length > 0;
     }
 
     function handleResultReceived(data) {
