@@ -171,8 +171,28 @@ public class ClaudeChatPanel implements Disposable {
      * Reads the system clipboard and forwards either text or an image to the
      * webview. Image bytes are sent as base64 so the existing image-attachment
      * pipeline (state.attachedImages, paste handler) can reuse them.
+     *
+     * <p>Skips when the JCEF browser already has the keyboard focus —
+     * Chromium handles paste natively in that case and the webview's own
+     * onpaste handler will fire, so doing it here too duplicates the action
+     * (e.g. an image gets attached twice).
      */
     private void handlePasteShortcut() {
+        // Don't double-paste: if the JCEF browser is focused, the native
+        // browser paste path is already running; we only need this Swing
+        // fallback when IntelliJ's tool window absorbed the shortcut.
+        try {
+            if (browser != null && browser.getComponent() != null
+                && browser.getComponent().isFocusOwner()) {
+                return;
+            }
+            java.awt.Window win = javax.swing.SwingUtilities.getWindowAncestor(rootPanel);
+            java.awt.Component focused = (win != null) ? win.getFocusOwner() : null;
+            if (focused != null && javax.swing.SwingUtilities.isDescendingFrom(
+                    focused, browser != null ? browser.getComponent() : rootPanel)) {
+                return;
+            }
+        } catch (Exception ignored) {}
         try {
             java.awt.datatransfer.Transferable tr =
                 java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
