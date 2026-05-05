@@ -5,7 +5,6 @@ import java.nio.file.Paths;
 import java.util.*;
 
 import com.anthropic.claude.intellij.model.ConversationModel;
-import com.anthropic.claude.intellij.model.MessageBlock;
 import com.anthropic.claude.intellij.model.SessionInfo;
 import com.intellij.openapi.diagnostic.Logger;
 
@@ -130,21 +129,11 @@ public class ClaudeSessionManager {
         currentSession.setMessageCount(model.getMessageCount());
         currentSession.touch();
 
-        // Generate summary from first user message (cleaned of file-XML and
-        // [Active editor context] prefixes — see JsonlSessionScanner#cleanForSummary)
-        if (currentSession.getSummary() == null && !model.getMessages().isEmpty()) {
-            for (MessageBlock msg : model.getMessages()) {
-                if (msg.getRole() == MessageBlock.Role.USER) {
-                    String text = JsonlSessionScanner.cleanForSummary(msg.getFullText());
-                    if (text == null || text.isEmpty()) continue;
-                    if (text.length() > 60) {
-                        text = text.substring(0, 57) + "...";
-                    }
-                    currentSession.setSummary(text);
-                    break;
-                }
-            }
-        }
+        // Note: no auto-generated summary here. The Session History list reads
+        // its title from JSONL (JsonlSessionScanner), preferring the CLI's own
+        // {"type":"summary",…} entry — which is an LLM-written tight title —
+        // and falling back to the first user message. The local SessionStore
+        // summary is reserved for explicitly curated values (e.g. /rename).
 
         store.saveSession(currentSession);
     }

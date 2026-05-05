@@ -91,7 +91,8 @@ public class JsonlSessionScanner {
         info.setLastActiveTime(jsonl.lastModified());
         info.setWorkingDirectory(projectKey);
 
-        String summary = null;
+        String firstUserSummary = null;
+        String cliSummary = null; // last {"type":"summary",...} wins
         int messageCount = 0;
         long createdAt = 0L;
         String model = null;
@@ -114,14 +115,23 @@ public class JsonlSessionScanner {
                             } catch (Exception ignored) {}
                         }
                     }
-                    // First user message → summary (cleaned of noise prefixes)
-                    if (summary == null && "user".equals(type)) {
+                    // CLI-generated summary entries: {"type":"summary","summary":"…","leafUuid":"…"}
+                    // Prefer these over the first-user-message fallback. Last one wins.
+                    if ("summary".equals(type)) {
+                        String s = JsonParser.getString(obj, "summary");
+                        if (s != null && !s.isEmpty()) {
+                            cliSummary = s;
+                        }
+                        continue;
+                    }
+                    // First user message → fallback summary (cleaned of noise prefixes)
+                    if (firstUserSummary == null && "user".equals(type)) {
                         Map<String, Object> msg = JsonParser.getMap(obj, "message");
                         if (msg != null) {
                             Object content = msg.get("content");
                             String text = cleanForSummary(extractUserText(content));
                             if (text != null && !text.isEmpty()) {
-                                summary = text.length() > 60 ? text.substring(0, 57) + "..." : text;
+                                firstUserSummary = text.length() > 60 ? text.substring(0, 57) + "..." : text;
                             }
                         }
                     }
@@ -145,6 +155,11 @@ public class JsonlSessionScanner {
 
         if (messageCount == 0) return null; // not really a conversation
 
+        // Prefer the CLI's auto-generated summary (a tight LLM-written title);
+        // fall back to the first user message if the CLI hasn't written one yet.
+        String summary = (cliSummary != null && !cliSummary.isEmpty())
+                ? (cliSummary.length() > 60 ? cliSummary.substring(0, 57) + "..." : cliSummary)
+                : firstUserSummary;
         info.setSummary(summary);
         info.setMessageCount(messageCount);
         info.setModel(model);
