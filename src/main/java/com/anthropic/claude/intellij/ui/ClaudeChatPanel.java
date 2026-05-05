@@ -1457,14 +1457,49 @@ public class ClaudeChatPanel implements Disposable {
     }
 
     /**
-     * Resumes a previous session by stopping the current CLI and restarting with --resume flag.
+     * Resumes a previous session by stopping the current CLI and restarting
+     * with {@code --resume <id>}. Robustness rules:
+     * <ul>
+     *   <li>Always call {@code cliManager.stop()} unconditionally — if the CLI
+     *       was disconnected we still want to clear any zombie process and any
+     *       stored config that Reconnect might otherwise reuse.</li>
+     *   <li>Pre-set {@code conversationModel}'s session info to the target id
+     *       <i>before</i> starting the new CLI, so that anything reading
+     *       {@link ConversationModel#getSessionInfo()} during the start window
+     *       (notably the Reconnect button) sees the resumed id, not the
+     *       previous tab's stale id.</li>
+     *   <li>Reset all per-tab transient state ({@code tabNameSet},
+     *       {@code resumeSessionId}, edit caches) so the new session behaves
+     *       like a fresh tab.</li>
+     *   <li>Surface {@link java.io.IOException} from {@code start()} as a
+     *       toast / error rather than swallowing it — the previous code did
+     *       this only via the outer try/catch which led to silent failures.</li>
+     * </ul>
      */
     private void resumeSession(String sessionId) {
         try {
-            if (cliManager.isRunning()) {
-                cliManager.stop();
-            }
+            // Always stop, even if isRunning() is false — otherwise stale
+            // cliManager state (storedConfig, zombie processes) can survive
+            // and confuse a later Reconnect.
+            try { cliManager.stop(); } catch (Exception ignored) {}
+
             conversationModel.clear();
+
+            // Pre-seed the session info BEFORE we start the new CLI so a
+            // racing Reconnect or any read of getSessionInfo() during
+            // start-up returns the target id rather than the previous tab's.
+            conversationModel.resetSessionInfo(new SessionInfo(sessionId));
+
+            // Update Content tag for tab persistence so a restart of the IDE
+            // also resumes this session and not the previous one.
+            updateContentSessionId(sessionId);
+
+            // Reset per-tab transient state (tab title will re-derive from
+            // the loaded history; pending edits from prev session are gone).
+            tabNameSet = false;
+            resumeSessionId = sessionId;
+            eagerSnapshotDone.clear();
+            stagedEditDone.clear();
 
             String projectPath = project.getBasePath();
             if (projectPath == null) {
@@ -1472,24 +1507,31 @@ public class ClaudeChatPanel implements Disposable {
             }
             String cliPath = ClaudeCliManager.getCliPath();
             if (cliPath == null) {
-                sendToWebview("error", "{\"message\":" + jsonString("Claude CLI not found.") + "}");
+                sendToWebview("error", "{\"message\":"
+                        + jsonString("Claude CLI not found.") + "}");
                 return;
             }
 
             ClaudeSettings.State settings = ClaudeSettings.getInstance().getState();
             CliProcessConfig.Builder builder = new CliProcessConfig.Builder(cliPath, projectPath)
-                .resumeSessionId(sessionId);
+                    .resumeSessionId(sessionId);
 
             if (settings.selectedModel != null && !settings.selectedModel.isEmpty()
                     && !"default".equals(settings.selectedModel)) {
                 builder.model(settings.selectedModel);
             }
+            if (settings.initialPermissionMode != null && !settings.initialPermissionMode.isEmpty()
+                    && !"default".equals(settings.initialPermissionMode)) {
+                builder.permissionMode(settings.initialPermissionMode);
+            }
+            if (currentEffort != null && !currentEffort.isEmpty()) {
+                builder.effort(currentEffort);
+            }
 
-            cliManager.start(builder.build());
-            showSystemMessage("Resuming session: **" + sessionId + "**");
-
-            // Load conversation history from JSONL file in background,
-            // then replay on EDT so webview events are properly ordered.
+            // Load JSONL history FIRST (synchronously) so that even if the CLI
+            // start fails the user at least sees the past conversation in
+            // the panel.  History is loaded in a background thread because
+            // disk I/O on EDT is bad form, but we don't gate the start() on it.
             final String sid = sessionId;
             new Thread(() -> {
                 java.util.List<MessageBlock> history = loadSessionHistoryFromJsonl(sid);
@@ -1501,9 +1543,20 @@ public class ClaudeChatPanel implements Disposable {
                     });
                 }
             }, "Claude-History-Loader").start();
+
+            try {
+                cliManager.start(builder.build());
+            } catch (java.io.IOException ioe) {
+                LOG.warn("Resume start failed", ioe);
+                sendToWebview("error", "{\"message\":"
+                        + jsonString("Failed to start CLI for resume: " + ioe.getMessage()) + "}");
+                return;
+            }
+            showSystemMessage("Resuming session: **" + sessionId + "**");
         } catch (Exception e) {
             LOG.error("Failed to resume session: " + sessionId, e);
-            sendToWebview("error", "{\"message\":" + jsonString("Failed to resume session: " + e.getMessage()) + "}");
+            sendToWebview("error", "{\"message\":"
+                    + jsonString("Failed to resume session: " + e.getMessage()) + "}");
         }
     }
 

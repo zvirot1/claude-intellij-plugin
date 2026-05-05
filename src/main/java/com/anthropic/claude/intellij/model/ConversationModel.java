@@ -270,6 +270,18 @@ public class ConversationModel implements ICliMessageListener {
     }
 
     /**
+     * Forcibly set the session info without firing the
+     * {@code onSessionInitialized} listener chain. Used by the resume flow so
+     * that callers reading {@link #getSessionInfo()} between
+     * "user clicked Resume" and "new CLI sent session_initialized" see the
+     * resumed session id rather than a stale previous one (which could cause
+     * Reconnect to revive the wrong session). Pass {@code null} to reset.
+     */
+    public void resetSessionInfo(SessionInfo info) {
+        this.sessionInfo = info;
+    }
+
+    /**
      * Load historical messages into the model and replay them as UI events.
      * Used when resuming a session to pre-populate the chat with past messages.
      * Fires onUserMessageAdded / onAssistantMessageStarted+Completed for each block
