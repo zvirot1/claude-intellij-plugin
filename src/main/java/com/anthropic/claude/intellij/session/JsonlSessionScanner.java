@@ -35,6 +35,82 @@ public class JsonlSessionScanner {
      * If {@code projectDir} is non-null, restricts to sessions whose project
      * directory matches that path.
      */
+    /**
+     * Fast variant: returns SessionInfo for every JSONL with ONLY filename +
+     * mtime — no file content read. Used to populate the Session History list
+     * instantly even with many GB of transcripts on disk. Call
+     * {@link #fillSessionDetails(SessionInfo)} on demand to fetch
+     * summary/model/messageCount lazily for visible rows.
+     */
+    public static List<SessionInfo> listSessionsFast(String projectDir) {
+        List<SessionInfo> result = new ArrayList<>();
+        File projectsRoot = new File(System.getProperty("user.home") + "/.claude/projects");
+        if (!projectsRoot.isDirectory()) return result;
+        File[] projectDirs = projectsRoot.listFiles(File::isDirectory);
+        if (projectDirs == null) return result;
+        String matchPrefix = (projectDir != null && !projectDir.isEmpty())
+                ? encodeProjectKey(projectDir).toLowerCase() : null;
+        for (File dir : projectDirs) {
+            if (matchPrefix != null) {
+                String lower = dir.getName().toLowerCase();
+                if (!lower.equals(matchPrefix) && !lower.startsWith(matchPrefix + "-")) continue;
+            }
+            File[] files = dir.listFiles();
+            if (files == null) continue;
+            for (File f : files) {
+                if (!f.isFile()) continue;
+                String n = f.getName();
+                if (!n.endsWith(".jsonl")) continue;
+                String sessionId = n.substring(0, n.length() - 6);
+                if (!isUuid(sessionId)) continue;
+                SessionInfo info = new SessionInfo(sessionId);
+                info.setLastActiveTime(f.lastModified());
+                info.setStartTime(f.lastModified());
+                info.setWorkingDirectory(dir.getName());
+                info.setMessageCount(0); // unknown until detailed read
+                result.add(info);
+            }
+        }
+        result.sort(Comparator.comparingLong(SessionInfo::getLastActiveTime).reversed());
+        return result;
+    }
+
+    /**
+     * Lazily read summary / model / messageCount for a single SessionInfo by
+     * locating its {@code .jsonl} on disk. Mutates the input — no-op if the
+     * file is missing or unparseable.
+     */
+    public static void fillSessionDetails(SessionInfo info) {
+        if (info == null || info.getSessionId() == null) return;
+        SessionInfo full = findSessionById(info.getSessionId());
+        if (full == null) return;
+        if (full.getSummary() != null)  info.setSummary(full.getSummary());
+        if (full.getModel() != null)    info.setModel(full.getModel());
+        if (full.getMessageCount() > 0) info.setMessageCount(full.getMessageCount());
+        if (full.getStartTime() > 0)    info.setStartTime(full.getStartTime());
+    }
+
+    /**
+     * Look up a single session's full SessionInfo by id. Searches every
+     * project under {@code ~/.claude/projects/} for the matching JSONL.
+     * Returns null if not found.
+     */
+    public static SessionInfo findSessionById(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) return null;
+        File root = new File(System.getProperty("user.home") + "/.claude/projects");
+        if (!root.isDirectory()) return null;
+        File[] dirs = root.listFiles(File::isDirectory);
+        if (dirs == null) return null;
+        for (File dir : dirs) {
+            File candidate = new File(dir, sessionId + ".jsonl");
+            if (!candidate.isFile()) continue;
+            try {
+                return buildSessionInfo(candidate, sessionId, dir.getName());
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
     public static List<SessionInfo> listSessions(String projectDir) {
         List<SessionInfo> result = new ArrayList<>();
         File projectsRoot = new File(System.getProperty("user.home") + "/.claude/projects");
@@ -100,12 +176,36 @@ public class JsonlSessionScanner {
         try (BufferedReader br = new BufferedReader(
                 new InputStreamReader(new FileInputStream(jsonl), StandardCharsets.UTF_8))) {
             String line;
-            while ((line = br.readLine()) != null) {
+            int linesRead = 0;
+            // Cap at 500 lines per file. With many GB of JSONL across
+            // projects, full scans block the dialog for minutes. The first
+            // 500 lines reliably contain the first user message and any
+            // early CLI summary; messageCount becomes a lower bound.
+            final int MAX_LINES_PER_FILE = 500;
+            while ((line = br.readLine()) != null && linesRead++ < MAX_LINES_PER_FILE) {
                 if (line.isEmpty()) continue;
+                // Cheap pre-filter — we only care about user/assistant/summary
+                // entries. Tool-use / tool-result lines can be megabytes;
+                // parsing them just to discard the result was the hot-spot.
+                // CLI 2.1.107+ omits top-level type for assistant turns —
+                // detect them via "role":"assistant" inside the message obj.
+                if (line.indexOf("\"type\":\"user\"")      < 0
+                 && line.indexOf("\"type\":\"assistant\"") < 0
+                 && line.indexOf("\"type\":\"summary\"")   < 0
+                 && line.indexOf("\"role\":\"assistant\"") < 0) continue;
                 try {
                     Map<String, Object> obj = JsonParser.parseObject(line);
                     String type = JsonParser.getString(obj, "type");
-                    if (type == null) continue;
+                    if (type == null) {
+                        // CLI 2.1.107+: derive type from message.role for
+                        // assistant turns that no longer carry top-level type.
+                        Map<String, Object> mm = JsonParser.getMap(obj, "message");
+                        if (mm != null) {
+                            String r = JsonParser.getString(mm, "role");
+                            if ("assistant".equals(r) || "user".equals(r)) type = r;
+                        }
+                        if (type == null) continue;
+                    }
                     // CLI writes timestamp per entry as ISO-8601 string — use first one as createdAt
                     if (createdAt == 0L) {
                         String ts = JsonParser.getString(obj, "timestamp");

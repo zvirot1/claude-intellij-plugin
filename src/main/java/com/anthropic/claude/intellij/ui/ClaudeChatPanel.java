@@ -1568,13 +1568,17 @@ public class ClaudeChatPanel implements Disposable {
                 }
             }, "Claude-History-Loader").start();
 
+            // CLI start failure must NOT abort the resume — on plugin restart
+            // the user expects past messages even if the CLI process can't
+            // immediately re-attach. Surface as a toast and keep going so the
+            // history loader thread above still populates the panel.
             try {
                 cliManager.start(builder.build());
             } catch (java.io.IOException ioe) {
-                LOG.warn("Resume start failed", ioe);
+                LOG.warn("Resume CLI start failed (continuing with history-only)", ioe);
                 sendToWebview("error", "{\"message\":"
-                        + jsonString("Failed to start CLI for resume: " + ioe.getMessage()) + "}");
-                return;
+                        + jsonString("CLI failed to attach (showing history only): "
+                                + ioe.getMessage()) + "}");
             }
             showSystemMessage("Resuming session: **" + sessionId + "**");
         } catch (Exception e) {
@@ -1619,6 +1623,11 @@ public class ClaudeChatPanel implements Disposable {
                         com.anthropic.claude.intellij.util.JsonParser.getMap(obj, "message");
                     if (msg == null) continue;
                     String role = com.anthropic.claude.intellij.util.JsonParser.getString(msg, "role");
+                    // CLI 2.1.107+ stopped writing top-level "type":"assistant"
+                    // for model turns — they're now {"parentUuid":...,"message":{...}}
+                    // with no outer type. Fall back to message.role so replay
+                    // doesn't silently drop every assistant message.
+                    if (type == null && role != null) type = role;
 
                     if ("user".equals(type) && "user".equals(role)) {
                         Object content = msg.get("content");

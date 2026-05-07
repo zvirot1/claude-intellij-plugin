@@ -146,23 +146,48 @@ public class SessionHistoryDialog extends DialogWrapper {
     // ==================== Load ====================
 
     private void loadSessions() {
-        sessions = sessionManager.listSessions();
+        // Fast path: enumerate JSONL filenames + mtimes only — no content
+        // read. With many GB of transcripts this finishes in milliseconds
+        // and the dialog opens immediately. Per-row summary/model/count
+        // get filled lazily in the background below.
+        sessions = com.anthropic.claude.intellij.session.JsonlSessionScanner.listSessionsFast(null);
         historyModel.setRowCount(0);
 
         for (SessionInfo info : sessions) {
             String date = info.getLastActiveTime() > 0
                 ? DATE_FORMAT.format(new Date(info.getLastActiveTime()))
                 : "Unknown";
-            String summary = info.getSummary() != null ? info.getSummary() : "";
-            String model = info.getModel() != null ? info.getModel() : "";
-            int messages = info.getMessageCount();
-
-            historyModel.addRow(new Object[]{date, summary, model, messages});
+            historyModel.addRow(new Object[]{date, "(loading…)", "", 0});
         }
 
         if (sessions.isEmpty()) {
             detailsArea.setText("No saved sessions found.\n\nSessions are saved automatically during conversations.");
+            return;
         }
+
+        // Background filler: read each row's summary/model/messageCount and
+        // update the table on the EDT. Stop early if the dialog is closed.
+        final List<SessionInfo> snapshot = new ArrayList<>(sessions);
+        Thread t = new Thread(() -> {
+            for (int i = 0; i < snapshot.size(); i++) {
+                final int idx = i;
+                final SessionInfo info = snapshot.get(i);
+                try {
+                    com.anthropic.claude.intellij.session.JsonlSessionScanner.fillSessionDetails(info);
+                } catch (Exception ignored) {}
+                SwingUtilities.invokeLater(() -> {
+                    if (idx >= historyModel.getRowCount()) return;
+                    String summary = info.getSummary() != null ? info.getSummary() : "";
+                    String model = info.getModel() != null ? info.getModel() : "";
+                    int msgs = info.getMessageCount();
+                    historyModel.setValueAt(summary, idx, 1);
+                    historyModel.setValueAt(model, idx, 2);
+                    historyModel.setValueAt(msgs, idx, 3);
+                });
+            }
+        }, "Claude-SessionDetails-Filler");
+        t.setDaemon(true);
+        t.start();
     }
 
     // ==================== Selection ====================
