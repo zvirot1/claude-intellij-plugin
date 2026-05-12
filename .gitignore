@@ -15,6 +15,8 @@ build/
 Thumbs.db
 bin/
 
-# Only keep the latest plugin ZIP — older ones live as Release assets
+# Plugin ZIPs are NOT tracked in dev. Workflow:
+#   dev      → code only, no ZIPs
+#   preview  → orphan branch holding ClaudeCode-preview.zip for testers
+#   main     → official release with releases/<version>.zip
 claude-intellij-plugin-*.zip
-!claude-intellij-plugin-202605070901.zip
