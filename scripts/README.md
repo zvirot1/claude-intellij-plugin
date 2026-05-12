@@ -27,12 +27,12 @@ Both run from the repo root and assume an `azuredevops` remote at
 
 **Per-release** (URL changes each cut — share it with whoever is testing):
 ```
-https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/v1.0.0-<UTC-ts>.zip&versionDescriptor.version=release/v1.0.0-<UTC-ts>&versionDescriptor.versionType=branch&download=true
+https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/claude-intellij-plugin-<UTC-ts>.zip&versionDescriptor.version=release/v1.0.0-<UTC-ts>&versionDescriptor.versionType=branch&download=true
 ```
 
 **Latest released** (after merge to main + tag):
 ```
-https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/v1.0.0-<UTC-ts>.zip&download=true
+https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/claude-intellij-plugin-<UTC-ts>.zip&download=true
 ```
 
 ## Typical workflow

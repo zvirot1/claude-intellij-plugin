@@ -35,7 +35,14 @@ if [[ ! "$TAG" =~ ^v ]]; then
     exit 1
 fi
 
-ASSET="releases/${TAG}.zip"
+# Strip the leading "v" + version prefix to get the timestamp portion.
+# Tag is v1.0.0-<UTC-ts>; asset is claude-intellij-plugin-<UTC-ts>.zip.
+TS="${TAG#v1.0.0-}"
+if [[ "$TS" == "$TAG" ]]; then
+    echo "    ✗ unexpected tag format (need v1.0.0-<ts>): $TAG" >&2
+    exit 1
+fi
+ASSET="releases/claude-intellij-plugin-${TS}.zip"
 
 echo "==> Checkout main + fast-forward"
 git checkout main

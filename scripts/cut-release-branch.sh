@@ -38,7 +38,9 @@ AUTHOR_NAME="${GIT_AUTHOR_NAME:-zvirot1}"
 TS="$(date -u +%Y%m%d%H%M)"
 RELEASE_TAG="v1.0.0-${TS}"
 RELEASE_BRANCH="release/${RELEASE_TAG}"
-TARGET="releases/${RELEASE_TAG}.zip"
+# ZIP filename mirrors the legacy GitHub convention so installers/scripts
+# that grep for "claude-intellij-plugin-*.zip" keep working.
+TARGET="releases/claude-intellij-plugin-${TS}.zip"
 
 echo "==> Pre-flight: working tree must be clean"
 if [[ -n "$(git status --porcelain)" ]]; then
