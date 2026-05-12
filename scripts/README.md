@@ -1,22 +1,53 @@
 # Build & publish scripts
 
+Branch model (same as the VS2022 plugin):
+
+```
+   dev  ─────►  release/v1.0.0-<UTC-ts>  ───PR───►  main
+   (code only)   (snapshot: code + releases/v…zip)   (code + every release ZIP)
+```
+
+| Branch | Default | Holds |
+|--------|---------|-------|
+| `dev`  | ✅      | Source code. No ZIPs. |
+| `release/v1.0.0-<UTC-ts>` |         | Snapshot of dev + a single new `releases/v….zip` for testers. |
+| `main` |         | Code + accumulated `releases/v….zip` files across every release. |
+
+## Scripts
+
 | Script | When to run | What it does |
 |--------|------------|--------------|
-| `push-preview.sh` | Anytime you want a tester to grab a fresh ZIP from the same URL | Builds, force-pushes an orphan `preview` branch with `claude-intellij-plugin-preview.zip` |
-| `push-release.sh` | After a PR `dev → main` has been merged in Azure DevOps | Builds, drops the ZIP into `releases/v1.0.0-<UTC-ts>.zip`, tags it, pushes commit + tag to `main` |
+| `cut-release-branch.sh` | When you want a tester build | Builds, creates `release/v1.0.0-<UTC-ts>` from current `dev` with the ZIP under `releases/`, pushes the branch. |
+| `tag-release.sh v1.0.0-…` | After the `release/v… → main` PR is merged in Azure DevOps | Pulls main, verifies the asset is present, creates an annotated tag, pushes it. |
 
-Both run from the repo root, both assume an `azuredevops` remote pointing at
+Both run from the repo root and assume an `azuredevops` remote at
 `https://vstsleumi.visualstudio.com/AI-helper-extensions/_git/claude-intellij-plugin`.
 
-## Tester URL (constant across builds)
+## Tester URLs
+
+**Per-release** (URL changes each cut — share it with whoever is testing):
 ```
-https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/claude-intellij-plugin-preview.zip&versionDescriptor.version=preview&versionDescriptor.versionType=branch&download=true
+https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/v1.0.0-<UTC-ts>.zip&versionDescriptor.version=release/v1.0.0-<UTC-ts>&versionDescriptor.versionType=branch&download=true
 ```
 
-## Branch model
+**Latest released** (after merge to main + tag):
+```
+https://vstsleumi.visualstudio.com/AI-helper-extensions/_apis/git/repositories/claude-intellij-plugin/items?path=/releases/v1.0.0-<UTC-ts>.zip&download=true
+```
 
-| Branch | Default | Tracks | Holds |
-|--------|---------|--------|-------|
-| `dev`  | ✅      | source code | no ZIPs |
-| `preview` |       | orphan, force-push | single `claude-intellij-plugin-preview.zip` |
-| `main` |         | merge target via PR | `releases/<version>.zip` |
+## Typical workflow
+
+```bash
+# 1. Work on dev — commit + push code as usual:
+git push azuredevops dev
+
+# 2. Cut a release candidate (creates release/v1.0.0-<ts>):
+./scripts/cut-release-branch.sh
+# prints the tester URL + the PR-create URL
+
+# 3. Tester downloads, tries the build. If OK:
+#    Open the PR in Azure DevOps UI, merge release/v1.0.0-<ts> → main.
+
+# 4. Tag the merged release commit on main:
+./scripts/tag-release.sh v1.0.0-<ts>
+```
