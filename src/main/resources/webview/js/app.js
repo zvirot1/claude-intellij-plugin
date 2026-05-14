@@ -248,6 +248,14 @@
         messageInput.style.textAlign = 'left';
         clearAttachments();
         autoResizeTextarea();
+        // Switch to stop-button state IMMEDIATELY on send. Previously this
+        // only happened when `assistant_message_started` arrived from the
+        // CLI — which on slow networks (e.g. Bank Leumi's AIM-hook proxy
+        // through Bedrock) can be 30-60 s after Send. The user had no way
+        // to abort during that window, and the UI looked like nothing was
+        // happening yet. `handleError` + `handleAssistantMessageCompleted`
+        // + `handleGenerationStopped` all reset this back to send state.
+        setStreamingState(true);
         updateSendButton();
         messageInput.focus();
         showLoadingIndicator();
@@ -1036,6 +1044,11 @@
 
     function handleError(data) {
         removeLoadingIndicator();
+        removeThinkingIndicator();
+        // Reset to send-button state so the user can try again. Without
+        // this the stop button stays visible after an error, leaving the
+        // input "locked" until the user opens a new tab.
+        setStreamingState(false);
         var el = document.createElement('div');
         el.className = 'message message-error';
 
