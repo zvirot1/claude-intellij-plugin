@@ -99,12 +99,13 @@ public class AttachmentManager {
                 : null;
             String displayName = relativePath != null ? relativePath : file.getName();
 
-            // Ask for line range
-            LineRange range = askForLineRange(file.getName());
+            // Match Eclipse behaviour: attach the whole file with no
+            // intermediate "Line range (optional)" dialog — that extra prompt
+            // was added per-IntelliJ but felt like friction for the common
+            // case of "just attach this file". Line-range support is still
+            // wired through FileAttachment for future @-mentions that want it.
             FileAttachment attachment = new FileAttachment(
-                file.getPath(), displayName,
-                range != null ? range.start : 0,
-                range != null ? range.end : 0
+                file.getPath(), displayName, 0, 0
             );
             attachments.add(attachment);
         }
@@ -123,11 +124,9 @@ public class AttachmentManager {
         if (files.length == 0) return;
 
         for (VirtualFile file : files) {
-            LineRange range = askForLineRange(file.getName());
+            // Match Eclipse behaviour — attach whole file, no line-range prompt.
             FileAttachment attachment = new FileAttachment(
-                file.getPath(), file.getName(),
-                range != null ? range.start : 0,
-                range != null ? range.end : 0
+                file.getPath(), file.getName(), 0, 0
             );
             attachments.add(attachment);
         }
@@ -154,6 +153,10 @@ public class AttachmentManager {
     /**
      * Asks the user for an optional line range.
      */
+    // Kept around for potential future use (e.g. an explicit "Attach with
+    // line range…" entry point or @-mention extensions). Not called by the
+    // default attach flow, which now matches Eclipse and skips the prompt.
+    @SuppressWarnings("unused")
     private LineRange askForLineRange(String fileName) {
         LineRangeDialog dialog = new LineRangeDialog(project, fileName);
         if (dialog.showAndGet()) {
