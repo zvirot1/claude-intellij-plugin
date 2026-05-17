@@ -65,9 +65,12 @@ public class AttachmentManager {
     }
 
     /**
-     * Shows a popup menu letting the user choose between project file and filesystem file.
+     * Shows a popup menu letting the user choose between project file,
+     * filesystem file, and (if {@code pasteImageAction} is provided) a
+     * clipboard-image paste. Matches the Eclipse plugin's three-item menu.
      */
-    public void showAttachMenu(Component parent, AttachmentCallback callback) {
+    public void showAttachMenu(Component parent, AttachmentCallback callback,
+                               Runnable pasteImageAction) {
         JPopupMenu menu = new JPopupMenu();
 
         JMenuItem projectItem = new JMenuItem("From Project...");
@@ -78,7 +81,20 @@ public class AttachmentManager {
         filesystemItem.addActionListener(e -> attachFileFromFilesystem(callback));
         menu.add(filesystemItem);
 
+        if (pasteImageAction != null) {
+            JMenuItem imageItem = new JMenuItem("Paste image from clipboard");
+            imageItem.addActionListener(e -> pasteImageAction.run());
+            menu.add(imageItem);
+        }
+
         menu.show(parent, 0, parent.getHeight());
+    }
+
+    /**
+     * Backwards-compatible overload — no image-paste entry.
+     */
+    public void showAttachMenu(Component parent, AttachmentCallback callback) {
+        showAttachMenu(parent, callback, null);
     }
 
     /**

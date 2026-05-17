@@ -1377,13 +1377,50 @@ public class ClaudeChatPanel implements Disposable {
 
     /**
      * Opens the file attachment dialog (project/filesystem picker).
+     * Menu mirrors the Eclipse plugin: "From Project…", "From Filesystem…",
+     * and "Paste image from clipboard". The third item bypasses the file
+     * picker entirely and reuses the same Ctrl+V image-paste flow.
      */
     private void handleAttachFileDialog() {
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
-            attachmentManager.showAttachMenu(rootPanel, attachments -> {
-                sendAttachmentListToWebview(attachments);
-            });
+            attachmentManager.showAttachMenu(rootPanel,
+                attachments -> sendAttachmentListToWebview(attachments),
+                this::pasteImageFromClipboardAsAttachment);
         });
+    }
+
+    /**
+     * Reads the system clipboard; if it contains an image, dispatches it to
+     * the webview as an attachment (same wire format as the Ctrl+V paste
+     * shortcut). If no image is on the clipboard, shows a toast so the user
+     * isn't left wondering why nothing happened.
+     */
+    private void pasteImageFromClipboardAsAttachment() {
+        try {
+            java.awt.datatransfer.Transferable tr =
+                java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
+            if (tr == null || !tr.isDataFlavorSupported(
+                    java.awt.datatransfer.DataFlavor.imageFlavor)) {
+                sendToast("No image on clipboard.");
+                return;
+            }
+            Object img = tr.getTransferData(java.awt.datatransfer.DataFlavor.imageFlavor);
+            if (!(img instanceof java.awt.Image)) {
+                sendToast("Clipboard image is not in a usable format.");
+                return;
+            }
+            String b64 = encodeImageAsPngBase64((java.awt.Image) img);
+            if (b64 == null) {
+                sendToast("Failed to encode clipboard image.");
+                return;
+            }
+            sendToWebview("paste_from_clipboard",
+                "{\"kind\":\"image\",\"mediaType\":\"image/png\",\"bytes\":"
+                + jsonString(b64) + "}");
+        } catch (Exception e) {
+            LOG.warn("paste_image_attachment failed", e);
+            sendToast("Paste image failed: " + e.getMessage());
+        }
     }
 
     /**
