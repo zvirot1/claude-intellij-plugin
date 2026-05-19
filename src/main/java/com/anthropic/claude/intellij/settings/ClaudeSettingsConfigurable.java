@@ -15,6 +15,8 @@ import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 
 /**
@@ -28,6 +30,17 @@ public class ClaudeSettingsConfigurable implements Configurable {
     private JComboBox<String> modelCombo;
     private JComboBox<String> permissionModeCombo;
     private JBPasswordField apiKeyField;
+    /**
+     * True while {@link #apiKeyField} still holds the masked placeholder
+     * ({@code "••••••••"}) that {@link #reset()} writes when an API key is
+     * already stored. The user has not yet edited the field, so on apply we
+     * must leave the stored key untouched. The flag flips to {@code false}
+     * the moment the user types or clears the field, after which apply
+     * uses the literal field contents (empty → clear key, non-empty → write).
+     */
+    private boolean apiKeyShowingPlaceholder;
+    /** What "no change" looks like for {@link JBPasswordField}. */
+    private static final String API_KEY_PLACEHOLDER = "••••••••";
     private JBCheckBox autosaveCheckbox;
     private JBCheckBox ctrlEnterCheckbox;
     private JBCheckBox respectGitIgnoreCheckbox;
@@ -126,6 +139,14 @@ public class ClaudeSettingsConfigurable implements Configurable {
         // API Key (secure)
         apiKeyField = new JBPasswordField();
         apiKeyField.getEmptyText().setText("Uses OAuth if empty");
+        // Any user-driven edit clears the "still showing placeholder" flag
+        // so apply() treats the field as authoritative (including empty =
+        // delete-from-keychain).
+        apiKeyField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e)  { apiKeyShowingPlaceholder = false; }
+            @Override public void removeUpdate(DocumentEvent e)  { apiKeyShowingPlaceholder = false; }
+            @Override public void changedUpdate(DocumentEvent e) { apiKeyShowingPlaceholder = false; }
+        });
 
         // Checkboxes
         autosaveCheckbox = new JBCheckBox("Auto-save files after Claude edits them");
@@ -163,7 +184,7 @@ public class ClaudeSettingsConfigurable implements Configurable {
                 .addComponentToRightColumn(cliDesc)
                 .addComponentToRightColumn(cliStatusLabel)
                 .addSeparator()
-                .addLabeledComponent("API Key:", apiKeyField)
+                .addLabeledComponent("API Key:", buildApiKeyRow())
                 .addComponentToRightColumn(apiDesc)
                 .addSeparator()
                 .addLabeledComponent("Model:", modelCombo)
@@ -194,6 +215,25 @@ public class ClaudeSettingsConfigurable implements Configurable {
 
         reset();
         return panel;
+    }
+
+    /**
+     * Field + "Clear" button row for the API Key control. The button wipes
+     * the keychain entry on the next apply(); it's a UX shortcut so users
+     * don't have to manually clear the masked placeholder.
+     */
+    private JComponent buildApiKeyRow() {
+        JPanel row = new JPanel(new BorderLayout(6, 0));
+        row.add(apiKeyField, BorderLayout.CENTER);
+
+        JButton clearBtn = new JButton("Clear");
+        clearBtn.setToolTipText("Remove the stored API key (revert to OAuth on next apply)");
+        clearBtn.addActionListener(e -> {
+            apiKeyField.setText("");
+            apiKeyShowingPlaceholder = false; // user intent: clear on apply
+        });
+        row.add(clearBtn, BorderLayout.EAST);
+        return row;
     }
 
     private JBLabel createDescriptionLabel(String text) {
@@ -236,11 +276,25 @@ public class ClaudeSettingsConfigurable implements Configurable {
         ClaudeSettings.State state = ClaudeSettings.getInstance().getState();
         if (state == null) return false;
 
-        boolean apiKeyModified = false;
-        String currentApiKey = SecureApiKeyStore.getApiKey();
-        String enteredApiKey = new String(apiKeyField.getPassword()).trim();
-        if (currentApiKey == null) currentApiKey = "";
-        apiKeyModified = !enteredApiKey.isEmpty() && !enteredApiKey.equals(currentApiKey);
+        // API key modification states:
+        //   placeholder still showing → no change
+        //   non-empty + matches stored → no change
+        //   non-empty + doesn't match stored → change (write)
+        //   empty + key currently stored → change (clear)
+        //   empty + nothing stored → no change
+        boolean apiKeyModified;
+        if (apiKeyShowingPlaceholder) {
+            apiKeyModified = false;
+        } else {
+            String currentApiKey = SecureApiKeyStore.getApiKey();
+            String enteredApiKey = new String(apiKeyField.getPassword()).trim();
+            if (currentApiKey == null) currentApiKey = "";
+            if (enteredApiKey.isEmpty()) {
+                apiKeyModified = !currentApiKey.isEmpty();
+            } else {
+                apiKeyModified = !enteredApiKey.equals(currentApiKey);
+            }
+        }
 
         return !cliPathField.getText().equals(state.cliPath)
                 || !getSelectedItem(modelCombo).equals(state.selectedModel)
@@ -286,10 +340,29 @@ public class ClaudeSettingsConfigurable implements Configurable {
         state.sessionHistoryLimit = (Integer) sessionHistoryLimitSpinner.getValue();
         state.tabTitleStrategy = tabTitleKeyFromLabel(getSelectedItem(tabTitleStrategyCombo));
 
-        // Save API key securely
-        String apiKey = new String(apiKeyField.getPassword()).trim();
-        if (!apiKey.isEmpty()) {
-            SecureApiKeyStore.setApiKey(apiKey);
+        // API key write logic — three states (see isModified comment):
+        //   placeholder still visible → leave stored key alone
+        //   non-empty field → write the new key
+        //   empty field (user cleared) → delete from keychain
+        if (!apiKeyShowingPlaceholder) {
+            String apiKey = new String(apiKeyField.getPassword()).trim();
+            if (apiKey.isEmpty()) {
+                // Clear the stored key — explicit deletion path the old
+                // code had no way to reach.
+                SecureApiKeyStore.setApiKey(null);
+            } else {
+                SecureApiKeyStore.setApiKey(apiKey);
+            }
+        }
+
+        // After persisting, re-display the masked placeholder if there is
+        // now a stored key, or leave empty if not. Same logic as reset().
+        if (SecureApiKeyStore.hasApiKey()) {
+            apiKeyField.setText(API_KEY_PLACEHOLDER);
+            apiKeyShowingPlaceholder = true;
+        } else {
+            apiKeyField.setText("");
+            apiKeyShowingPlaceholder = false;
         }
 
         // Update CLI status after applying
@@ -317,11 +390,17 @@ public class ClaudeSettingsConfigurable implements Configurable {
         sessionHistoryLimitSpinner.setValue(state.sessionHistoryLimit);
         tabTitleStrategyCombo.setSelectedItem(tabTitleLabelFromKey(state.tabTitleStrategy));
 
-        // Show masked indicator if API key exists (don't load the actual key)
+        // Show masked indicator if API key exists (don't load the actual key).
+        // Mark the field as "showing placeholder" so a follow-up apply() that
+        // doesn't see any user edits leaves the stored key alone instead of
+        // either rewriting it with the literal "••••••••" string or treating
+        // an unchanged placeholder as an empty-→-delete signal.
         if (SecureApiKeyStore.hasApiKey()) {
-            apiKeyField.setText("••••••••");
+            apiKeyField.setText(API_KEY_PLACEHOLDER);
+            apiKeyShowingPlaceholder = true;
         } else {
             apiKeyField.setText("");
+            apiKeyShowingPlaceholder = false;
         }
 
         updateCliStatus();
