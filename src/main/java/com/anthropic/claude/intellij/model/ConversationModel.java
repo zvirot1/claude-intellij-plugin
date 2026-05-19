@@ -111,7 +111,31 @@ public class ConversationModel implements ICliMessageListener {
             }
 
             fireError("⚠ Hook '" + hook + "' reported an error:\n" + detail + hint);
+
+            // Any tool calls that were emitted earlier in this turn will
+            // never complete — the CLI is about to abort the request.
+            // Without this, the tool bubbles sit on "Running" forever
+            // alongside the error bubble (the user can't tell the plugin
+            // already gave up). Reuse the same helper we run on connection
+            // loss so the UI gets one consistent treatment.
+            String short_ = detail.length() > 100 ? detail.substring(0, 100) + "…" : detail;
+            markActiveToolCallsFailed("Blocked by hook '" + hook + "': " + short_);
         }
+    }
+
+    /**
+     * Listener hook for stderr-detected blocks that don't reach us via the
+     * stream-json {@code hook_response} channel — e.g. AIM SessionEnd hooks
+     * killed before they emit a result, or AWS auth refresh failures. Same
+     * fan-out as {@link #handleSystemNotification}: a visible error bubble
+     * plus a sweep that fails any "Running" tool widgets.
+     */
+    @Override
+    public void onHookBlocked(String detail) {
+        if (detail == null || detail.isBlank()) detail = "(no detail)";
+        if (detail.length() > 400) detail = detail.substring(0, 400) + " …";
+        fireError("⚠ Blocked by environment hook: " + detail);
+        markActiveToolCallsFailed("Blocked by environment hook");
     }
 
     @Override

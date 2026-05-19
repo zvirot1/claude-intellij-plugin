@@ -29,4 +29,17 @@ public interface ICliMessageListener {
     default void onConnectionError(IOException error) {
         // Default: ignore connection errors
     }
+
+    /**
+     * Called when {@code ClaudeCliManager.readProcessErrors} pattern-matches
+     * a stderr line that indicates a corporate hook (AIM proxy, AWS auth
+     * refresh, etc.) blocked the request and no {@code hook_response}
+     * stream-json event is going to arrive. Allows listeners to short-circuit
+     * "Running" tool calls and surface a visible error to the user.
+     *
+     * @param detail human-readable stderr fragment that triggered the match
+     */
+    default void onHookBlocked(String detail) {
+        // Default: ignore — non-recovery listeners don't care
+    }
 }

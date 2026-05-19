@@ -667,12 +667,42 @@ public class ClaudeCliManager {
                 // Always log stderr at warn level, plus a tagged DIAG copy for filtering
                 LOG.warn("[Claude CLI stderr] " + line);
                 com.anthropic.claude.intellij.service.ClaudeApplicationService.logDiag("[DIAG-STDERR] " + line);
+                // Detect corporate-hook blocks that won't surface as
+                // hook_response stream-json events — these patterns indicate
+                // the request will never complete. Dispatch onHookBlocked so
+                // listeners can flip "Running" tool widgets to FAILED and
+                // show the user a visible error bubble instead of leaving
+                // the chat looking stuck.
+                if (isHookBlockSignal(line)) {
+                    for (ICliMessageListener listener : messageListeners) {
+                        try {
+                            listener.onHookBlocked(line.trim());
+                        } catch (Exception listenerEx) {
+                            LOG.warn("Listener.onHookBlocked threw", listenerEx);
+                        }
+                    }
+                }
             }
         } catch (IOException e) {
             if (state.get() == ProcessState.RUNNING) {
                 LOG.warn("Error reading CLI process stderr", e);
             }
         }
+    }
+
+    /**
+     * Tight allow-list of stderr substrings we treat as "this request is
+     * dead — fail any running tools and tell the user". Intentionally strict
+     * to avoid false positives on normal warnings or progress lines.
+     */
+    private static boolean isHookBlockSignal(String line) {
+        if (line == null) return false;
+        String low = line.toLowerCase();
+        return low.contains("hook cancelled")
+            || low.contains("authentication_failed")
+            || (low.contains("error_status") && low.contains("403"))
+            || low.contains("aws auth refresh timed out")
+            || low.contains("operation blocked by hook");
     }
 
     private void processNdjsonLine(String line) {
