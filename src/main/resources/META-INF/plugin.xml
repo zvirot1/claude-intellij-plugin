@@ -1,11 +1,21 @@
 <idea-plugin>
     <id>com.anthropic.claude.intellij</id>
-    <name>Claude Code</name>
-    <vendor email="support@anthropic.com" url="https://anthropic.com">Anthropic</vendor>
+    <name>Claude Code (Unofficial)</name>
+    <vendor>Independent Build (Unaffiliated)</vendor>
 
     <description><![CDATA[
-    AI coding assistant powered by Claude. Chat with Claude directly in your IDE,
-    get code explanations, reviews, refactoring suggestions, and more.
+    <p><b>Unofficial, independent IntelliJ plugin</b> that wraps the
+    <code>claude</code> CLI inside a JetBrains tool window — chat, code
+    explanations, reviews, refactoring suggestions, and more.</p>
+
+    <p>This plugin is <b>not built, distributed, or endorsed by Anthropic</b>
+    and is not synchronised with Anthropic's official release schedule. It
+    talks to the same Claude Code CLI that Anthropic ships, but the plugin
+    itself is an independent build maintained outside of Anthropic.</p>
+
+    <p>The names "Claude" and "Claude Code" are trademarks of Anthropic, PBC
+    and are used here only to identify the underlying CLI this plugin
+    integrates with.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

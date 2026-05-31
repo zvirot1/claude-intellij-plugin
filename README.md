@@ -1,8 +1,12 @@
-# Claude Code IntelliJ Plugin
+# Claude Code IntelliJ Plugin (Unofficial)
 
-An unofficial IntelliJ Platform plugin that brings the [Claude Code CLI](https://docs.claude.com) into JetBrains IDEs as a native chat tool window — with multi-tab conversations, mode/effort controls, session persistence, file pinning, and image paste.
+> **Vendor:** Independent Build (Unaffiliated)
+> **Not built, distributed, or endorsed by Anthropic.**
+> Not synchronised with Anthropic's release schedule. See [Disclaimer & trademarks](#disclaimer--trademarks).
 
-This is the **JetBrains-side counterpart** of the [Claude Eclipse plugin](https://github.com/zvirot1/claude-eclipse-plugin) and follows the same protocol shape and UX patterns as the official Claude Code VS Code extension.
+An **unofficial, independent** IntelliJ Platform plugin that brings the [Claude Code CLI](https://docs.claude.com) into JetBrains IDEs as a native chat tool window — with multi-tab conversations, mode/effort controls, session persistence, file pinning, and image paste.
+
+This is the **JetBrains-side counterpart** of the [Claude Eclipse plugin](https://github.com/zvirot1/claude-eclipse-plugin) and follows the same protocol shape and UX patterns as the official Claude Code VS Code extension. **Both are independent community builds** — neither is shipped or supported by Anthropic.
 
 ---
 
@@ -201,6 +205,26 @@ Anything else is forwarded to the CLI verbatim (e.g. `/plan`, `/review`).
 
 ---
 
+## Disclaimer & trademarks
+
+- This is an **unofficial, independent** plugin. The plugin's **vendor** in
+  IntelliJ's plugin manager is listed as `Independent Build (Unaffiliated)`.
+- The plugin is **not built, distributed, supported, or endorsed by
+  Anthropic, PBC**. It is **not synchronised** with Anthropic's official
+  release schedule and may lag behind official functionality.
+- The plugin integrates with the official `claude` CLI that Anthropic
+  ships. Any API quotas, billing, OAuth flows, and account-level rules
+  are governed by Anthropic — not by this plugin.
+- The names **"Claude"** and **"Claude Code"**, and any related logos, are
+  trademarks of **Anthropic, PBC**. They are used in this README, in the
+  plugin's UI, and in the source tree only nominatively — to identify the
+  underlying CLI this plugin integrates with. No claim of affiliation,
+  partnership, or endorsement is implied.
+- The Java package namespace `com.anthropic.claude.intellij` is retained
+  for historical and refactor-cost reasons; it is **not** a claim of
+  authorship by Anthropic.
+
 ## License
 
-This is an **unofficial** community plugin. It is provided as-is, with no warranty or affiliation with Anthropic.
+Provided as-is, with no warranty or affiliation with Anthropic. See
+[Disclaimer & trademarks](#disclaimer--trademarks) above.
